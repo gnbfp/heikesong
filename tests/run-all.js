@@ -2,8 +2,27 @@
  * tests/run-all.js —— 一键跑全部检查，输出 PASS/FAIL 汇总表
  * ----------------------------------------------------------------------------
  * 真实命令：node tests/run-all.js
- * 退出码：0 = 全部 PASS（允许 SKIP）；1 = 存在 FAIL。
- * STRICT=1 时把 SKIP 视为 FAIL（用于最终验收：不允许任何未覆盖项）。
+ *
+ * 【默认跑的 4 个套件】
+ *   1. tools/build-data.js --check   data/*.json ↔ js/data.js 产物一致性（预防「改了数据没重建」的假绿）
+ *   2. tests/sim.js                  无头逻辑：状态机/RNG/结算/整局/存档/离线自包含
+ *   3. tests/dom-smoke.js            Node DOM 垫片：真实 index.html + js/*.js 渲染与交互
+ *   4. tests/headless-check.js       无头 Edge file:// 端到端（浏览器不可用则整段 SKIP）
+ *
+ * 【退出码】0 = 全部 PASS（允许 SKIP）；1 = 存在 FAIL。
+ *   任何套件自身退出码非 0 也算 FAIL（即使它打印了 PASS=/FAIL= 汇总行，
+ *   以防「先打印汇总、再崩溃」造成的假绿）。
+ *
+ * 【STRICT=1 或 --strict 的语义】
+ *   默认（非 STRICT）：SKIP 只提示不判失败 —— 适合日常开发，浏览器不可用的沙箱里也能跑完。
+ *   STRICT=1：把每一项 SKIP 视为 FAIL（最终验收用：不允许任何未覆盖项）。
+ *   两种模式下脚本都会在结尾「未覆盖项（SKIP）明细」区逐条点名 SKIP 的 id / 套件 / 原因，
+ *   便于无人值守时一眼看出到底缺什么证据。
+ *
+ * 【假绿自证（按需跑，不在默认 4 个套件里）】
+ *   node tests/mutation-proof.js         # 在 os.tmpdir() 的整仓副本里变异：①data/items.json 漂移 ②去掉
+ *                                        #   js/game.js 剧本门位校验，期望两次都变红、复原后都变绿
+ *   node tests/mutation-proof.js --fast  # 同上但跳过 run-all（只跑 build-data --check + sim.js）
  * ========================================================================== */
 'use strict';
 
@@ -14,22 +33,40 @@ var child_process = require('child_process');
 
 var STRICT = process.env.STRICT === '1' || process.argv.indexOf('--strict') >= 0;
 
+/* mode: 'summary' = 套件自己打印 PASS=/FAIL=/SKIP= 汇总行，按行计数；
+ *       'exit'    = 套件只给退出码（如 build-data --check），退出码 0 即 PASS。 */
 var SUITES = [
-  { name: 'sim.js（无头逻辑：状态/RNG/结算/整局/存档）', file: 'sim.js' },
-  { name: 'dom-smoke.js（Node DOM 垫片：真实页面渲染与交互）', file: 'dom-smoke.js' },
-  { name: 'headless-check.js（无头 Edge file:// 端到端；浏览器不可用则 SKIP）', file: 'headless-check.js' }
+  {
+    name: 'build-data --check（data/*.json ↔ js/data.js 产物一致性）',
+    file: '../tools/build-data.js', args: ['--check'], mode: 'exit',
+    label: 'node tools/build-data.js --check'
+  },
+  {
+    name: 'sim.js（无头逻辑：状态/RNG/结算/整局/存档/离线自包含）',
+    file: 'sim.js', label: 'node tests/sim.js'
+  },
+  {
+    name: 'dom-smoke.js（Node DOM 垫片：真实页面渲染与交互）',
+    file: 'dom-smoke.js', label: 'node tests/dom-smoke.js'
+  },
+  {
+    name: 'headless-check.js（无头 Edge file:// 端到端；浏览器不可用则 SKIP）',
+    file: 'headless-check.js', label: 'node tests/headless-check.js'
+  }
 ];
 
 /* 注意：本沙箱禁止匿名管道，child_process 默认 stdio:'pipe' 会 EPERM。
  * 因此把子进程输出重定向到真实文件描述符（stdio: ['ignore', fd, fd]），不建管道。 */
 function runSuite(s) {
-  var full = path.join(__dirname, s.file);
-  var outFile = path.join(os.tmpdir(), 'doors-tests-' + s.file + '.' + process.pid + '.out');
+  var full = path.isAbsolute(s.file) ? s.file : path.join(__dirname, s.file);
+  var args = [full].concat(s.args || []);
+  var tag = (s.file + '').replace(/[\\/.]/g, '_') + (s.args ? '_' + s.args.join('_') : '');
+  var outFile = path.join(os.tmpdir(), 'doors-tests-' + tag + '.' + process.pid + '.out');
   var out = '', code = null, err = '';
   var fd = null;
   try {
     fd = fs.openSync(outFile, 'w');
-    var r = child_process.spawnSync(process.execPath, [full], {
+    var r = child_process.spawnSync(process.execPath, args, {
       stdio: ['ignore', fd, fd], timeout: 300000, windowsHide: true,
       env: Object.assign({}, process.env)
     });
@@ -46,7 +83,8 @@ function runSuite(s) {
   var m = out.match(/PASS=(\d+)\s+FAIL=(\d+)\s+SKIP=(\d+)/);
   return {
     name: s.name,
-    file: s.file,
+    label: s.label || ('node tests/' + s.file),
+    mode: s.mode || 'summary',
     code: code,
     pass: m ? Number(m[1]) : 0,
     fail: m ? Number(m[2]) : 0,
@@ -57,25 +95,58 @@ function runSuite(s) {
   };
 }
 
+/** 从套件输出里抽出 SKIP 明细（`[SKIP] <id> <msg>` + 下一行缩进原因）。 */
+function skipsOf(r) {
+  var out = [];
+  var lines = String(r.output || '').split(/\r?\n/);
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(/^\s*\[SKIP\]\s+(\S+)\s*(.*)$/);
+    if (!m) continue;
+    var why = '';
+    for (var j = i + 1; j < lines.length; j++) {
+      if (/^\s*\[(PASS|FAIL|SKIP)\]/.test(lines[j]) || /^\s*--/.test(lines[j])) break;
+      if (lines[j].trim()) { why = lines[j].trim(); break; }
+    }
+    out.push({ suite: r.name, id: m[1], msg: m[2], why: why });
+  }
+  return out;
+}
+
 console.log('三扇门 · 别信旁白 —— 验收自测（' + (STRICT ? 'STRICT 模式：SKIP 视为失败' : '普通模式：SKIP 不判失败') + '）');
 console.log('node = ' + process.execPath);
 console.log('仓库 = ' + path.resolve(__dirname, '..'));
+console.log('套件数 = ' + SUITES.length + '（含 data/*.json ↔ js/data.js 产物一致性检查）');
 
 var rows = SUITES.map(runSuite);
 
 /* 明细：每个套件的完整输出（便于复核，不做二次解读） */
 rows.forEach(function (r) {
   console.log('\n' + '#'.repeat(72));
-  console.log('# ' + r.name + '   [node tests/' + r.file + ']  exit=' + r.code);
+  console.log('# ' + r.name + '   [' + r.label + ']  exit=' + r.code);
   console.log('#'.repeat(72));
   console.log(r.output.trimEnd());
   if (r.error) console.log('[spawn error] ' + r.error);
 });
 
 /* 汇总表 */
-var w = [34, 6, 6, 6, 8];
-function pad(s, n) { s = String(s); while (s.length < n) s += ' '; return s; }
-function padL(s, n) { s = String(s); while (s.length < n) s = ' ' + s; return s; }
+var w = [42, 6, 6, 6, 11];
+/* 中文按 2 列宽计算，否则汇总表在终端里会错位 */
+function dw(s) {
+  s = String(s);
+  var n = 0;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    var wide = c === 0x2329 || c === 0x232a ||
+      (c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) ||
+      (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) ||
+      (c >= 0xfe30 && c <= 0xfe6f) || (c >= 0xff00 && c <= 0xff60) ||
+      (c >= 0xffe0 && c <= 0xffe6);
+    n += wide ? 2 : 1;
+  }
+  return n;
+}
+function pad(s, n) { s = String(s); while (dw(s) < n) s += ' '; return s; }
+function padL(s, n) { s = String(s); while (dw(s) < n) s = ' ' + s; return s; }
 
 console.log('\n' + '='.repeat(72));
 console.log('汇总表');
@@ -85,21 +156,46 @@ console.log('-'.repeat(72));
 
 var totP = 0, totF = 0, totS = 0, bad = 0;
 rows.forEach(function (r) {
+  var verdict;
+  if (r.mode === 'exit') {
+    verdict = r.code === 0 ? 'PASS' : 'FAIL';
+    if (r.code !== 0) bad++;
+    console.log(pad(r.name, w[0]) + padL('-', w[1]) + padL('-', w[2]) + padL('-', w[3]) + padL(verdict, w[4]));
+    if (r.code !== 0) {
+      console.log('   → ' + r.label + ' 退出码 ' + r.code + '（产物与 data/*.json 不一致；修复：node tools/build-data.js）');
+      console.log('   ' + r.output.trim().split(/\r?\n/).slice(-6).join('\n   '));
+    }
+    return;
+  }
   if (!r.parsed) {
     console.log(pad(r.name, w[0]) + padL('-', w[1]) + padL('-', w[2]) + padL('-', w[3]) + padL('无法解析', w[4]));
     console.log('   → 退出码 ' + r.code + '，未产出 PASS/FAIL 汇总（脚本崩溃或被 kill）');
     bad++;
     return;
   }
-  var verdict = r.fail > 0 ? 'FAIL' : (STRICT && r.skip > 0 ? 'FAIL(SKIP)' : (r.skip > 0 ? 'PASS(有SKIP)' : 'PASS'));
-  if (r.fail > 0 || (STRICT && r.skip > 0)) bad++;
+  verdict = r.fail > 0 ? 'FAIL' : (r.code !== 0 ? 'FAIL(exit' + r.code + ')' : (STRICT && r.skip > 0 ? 'FAIL(SKIP)' : (r.skip > 0 ? 'PASS(有SKIP)' : 'PASS')));
+  if (r.fail > 0 || r.code !== 0 || (STRICT && r.skip > 0)) bad++;
   totP += r.pass; totF += r.fail; totS += r.skip;
   console.log(pad(r.name, w[0]) + padL(r.pass, w[1]) + padL(r.fail, w[2]) + padL(r.skip, w[3]) + padL(verdict, w[4]));
 });
 console.log('-'.repeat(72));
 console.log(pad('合计', w[0]) + padL(totP, w[1]) + padL(totF, w[2]) + padL(totS, w[3]) + padL(bad ? 'FAIL' : 'PASS', w[4]));
 console.log('='.repeat(72));
-console.log(bad ? '\n最终结果：FAIL（存在失败项或无法解析的套件）' : '\n最终结果：PASS');
-if (totS > 0) console.log('注意：有 ' + totS + ' 项 SKIP（未覆盖）；最终验收请用 STRICT=1 复跑。');
+
+/* 未覆盖项（SKIP）明细：无人值守也能一眼看出缺什么证据 */
+var skips = [];
+rows.forEach(function (r) { skips = skips.concat(skipsOf(r)); });
+if (skips.length) {
+  console.log('\n未覆盖项（SKIP）明细 ' + skips.length + ' 条：');
+  skips.forEach(function (s) {
+    console.log('  · [' + s.id + '] ' + s.msg + '\n      套件：' + s.suite + '\n      原因：' + (s.why || '（套件未给出原因）'));
+  });
+} else {
+  console.log('\n未覆盖项（SKIP）：无。');
+}
+
+console.log(bad ? '\n最终结果：FAIL（存在失败项、产物漂移或无法解析的套件）' : '\n最终结果：PASS');
+if (totS > 0) console.log('注意：有 ' + totS + ' 项 SKIP（未覆盖）；最终验收请用 STRICT=1 复跑（SKIP 视为 FAIL）。');
+if (STRICT && totS > 0) console.log('STRICT=1：上述 ' + totS + ' 项 SKIP 已判为失败（见汇总表 FAIL(SKIP)）。');
 
 process.exit(bad ? 1 : 0);

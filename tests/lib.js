@@ -168,6 +168,12 @@ function loadScripts(opts) {
   sandbox.Math = Math;
   sandbox.JSON = JSON;
   sandbox.structuredClone = typeof structuredClone === 'function' ? structuredClone : undefined;
+  /* 额外注入的全局（用于「离线毒化」：把 fetch/XHR/WebSocket 换成一旦被调用就抛错的哨兵） */
+  if (opts.globals) {
+    for (var gname in opts.globals) {
+      if (Object.prototype.hasOwnProperty.call(opts.globals, gname)) sandbox[gname] = opts.globals[gname];
+    }
+  }
   if (opts.withDom) sandbox.document = makeDomStub();
   if (opts.withDom) sandbox.window = sandbox;
 

@@ -451,8 +451,8 @@ var DEMO_ROUNDS = (gd.data.seedDemo && gd.data.seedDemo.rounds) || [];
  */
 async function driveDemo(over) {
   var g = mkGame('demo', over);
-  var Game = g.Game, rec = g.rec;
-  var trace = { rounds: [], rec: rec.rec, error: null };
+  var Game = g.Game, rec = g.rec, ui = g.ui;
+  var trace = { rounds: [], rec: rec, ui: ui, error: null };
   Game.start('demo');
   if (!await until(function () { return Game.state.phase === 'PICK'; })) {
     trace.error = '第 1 轮未到达 PICK，phase=' + Game.state.phase;
@@ -615,24 +615,31 @@ async function main() {
     }
   }
   var combos = 0, badPick = [], noEmpty = [], onlyEmptyPicked = 0, noEmptyBoard = 0;
+  var degChecked = 0, degBad = [];
   boards.forEach(function (ids3) {
     for (var ps = 0; ps < 3; ps++) {
       combos++;
       var dd = ids3.map(function (id, k) { return { slot: k, itemId: id, opened: false, revealed: false }; });
       var hs = GameApi.hostPick(dd, ps);
-      if (hs == null || hs === ps || dd[hs].itemId === 'big_prize') {
-        if (badPick.length < 3) badPick.push(ids3.join('/') + ' 选' + ps + ' → ' + hs + '(' + (hs == null ? 'null' : dd[hs].itemId) + ')');
+      var hsItem = (hs == null || !dd[hs]) ? null : dd[hs].itemId;
+      if (hs == null || hs === ps || hsItem === 'big_prize') {
+        if (badPick.length < 3) badPick.push(ids3.join('/') + ' 选' + ps + ' → ' + hs + '(' + hsItem + ')');
       }
       var emptyIdx = -1;
       for (var q = 0; q < 3; q++) if (q !== ps && dd[q].itemId === 'empty') { emptyIdx = q; break; }
       if (emptyIdx >= 0) {
-        if (dd[hs].itemId !== 'empty' && noEmpty.length < 3) {
-          noEmpty.push(ids3.join('/') + ' 选' + ps + ' → 开了 ' + dd[hs].itemId + '，空门在 ' + emptyIdx);
+        if (hsItem !== 'empty' && noEmpty.length < 3) {
+          noEmpty.push(ids3.join('/') + ' 选' + ps + ' → 开了 ' + hsItem + '，空门在 ' + emptyIdx);
         }
-      } else if (ids3.indexOf('empty') >= 0) {
-        onlyEmptyPicked++;   /* 唯一空门被玩家选中：主持人按冻结设计退化为「开非大奖门」 */
       } else {
-        noEmptyBoard++;      /* 牌面本身没有空门（真实发牌不会出现） */
+        /* 退化牌面：唯一空门被玩家选中，或牌面本身没有空门（真实发牌不会出现）。
+           这两类没有「未被选中的空门」可开，主持人只能退化为开非大奖门；
+           以下逐个复核它依旧返回合法门，而不是写成恒真备注。 */
+        degChecked++;
+        if (ids3.indexOf('empty') >= 0) onlyEmptyPicked++; else noEmptyBoard++;
+        if (hs == null || hs === ps || hsItem === 'big_prize' || dd[hs].opened) {
+          degBad.push(ids3.join('/') + ' 选' + ps + ' → ' + hs + '(' + hsItem + ')');
+        }
       }
     }
   });
@@ -642,10 +649,11 @@ async function main() {
   ck.ok('G1.2', noEmpty.length === 0,
     'hostPick 在存在未选中空门时必然开那扇空门（' + combos + ' 组合全部命中）',
     noEmpty.join('；'));
-  ck.ok('G1.3', true,
-    '设计取舍（非缺陷，lead 已确认 js/game.js 冻结语义「主持人只保证开非大奖门、优先空门」）：' +
-    combos + ' 组合中 ' + onlyEmptyPicked + ' 组「唯一空门恰好被玩家选中」时主持人退化为开非大奖门，' +
-    noEmptyBoard + ' 组牌面本身无空门（真实发牌不会出现）');
+  ck.ok('G1.3', degChecked === onlyEmptyPicked + noEmptyBoard && onlyEmptyPicked > 0 && degBad.length === 0,
+    '退化牌面逐个复核：' + degChecked + ' 个「无未选中空门」组合（唯一空门被玩家选中 ' + onlyEmptyPicked +
+    ' 个 / 牌面本身无空门 ' + noEmptyBoard + ' 个）下 hostPick 仍返回合法门（≠玩家所选、≠大奖、门未开）' +
+    '，即 lead 确认的冻结语义「只保证开非大奖门、优先空门」在退化时不会穿帮',
+    'degChecked=' + degChecked + ' 期望=' + (onlyEmptyPicked + noEmptyBoard) + ' 违规=' + jsonOf(degBad));
 
   /* G1.4 阶段 1 P0：普通模式第 1 轮恰好 1 大奖 / 1 空门 / 1 小奖（且不含炸弹） */
   var badR1 = [], sets = {};
@@ -734,12 +742,18 @@ async function main() {
       }).join('；'));
 
     var hostNonEmpty = t1.rounds.filter(function (r2) { return r2.hostOpenedItemId !== 'empty'; });
-    ck.ok('G2.4b', true,
-      '记录（lead 决策，非缺陷，但演示时观众可见）：演示剧本 3 轮中 ' + (3 - hostNonEmpty.length) + '/3 轮主持人才开空门；' +
-      hostNonEmpty.map(function (r2) {
-        return 'R' + r2.round + ' 开「' + r2.hostOpenedItemId + '」而空门在槽 ' + r2.hostPickWouldBe;
-      }).join('；') +
-      '。ui.js:860 会显示「主持人打开了 N 号门：<物品名>」，与《开工清单》阶段 1 P0「主持人永远打开一扇空门」字面冲突');
+    var hostScriptBad = t1.rounds.filter(function (r2) {
+      return r2.hostOpenedSlot == null || r2.hostOpenedSlot === r2.pickedSlotFinal ||
+        r2.hostOpenedItemId === 'big_prize' || r2.hostOpenedCount !== 1;
+    });
+    ck.ok('G2.4b', hostScriptBad.length === 0 && t1.rounds.length === 3,
+      '硬不变量贯穿演示剧本全部 ' + t1.rounds.length + ' 轮：主持人所开门 ≠ 玩家所选门、≠ 大奖门、恰好开 1 扇' +
+      '（其中 ' + (3 - hostNonEmpty.length) + '/3 轮开空门，' + hostNonEmpty.length +
+      '/3 轮按剧本开非空门制造戏剧性——「字面永远开空门」与阶段 4 固定剧本冲突，已按 lead 决策以剧本为准）',
+      hostScriptBad.map(function (r2) {
+        return 'R' + r2.round + ' 玩家选=' + r2.pickedSlotFinal + ' 主持开=' + r2.hostOpenedSlot +
+          '(' + r2.hostOpenedItemId + ') 已开数=' + r2.hostOpenedCount;
+      }).join('；'));
 
     /* 非剧本轮（普通模式）走权重池发牌，必须满足冻结语义 */
     var g24 = mkGame('normal', {});
@@ -786,14 +800,19 @@ async function main() {
         return 'R' + r2.round + ' state=' + r2.hostOpenedSlot + '(' + r2.hostOpenedItemId + ') ui=' +
           r2.hostOpenCalls.map(function (c) { return c.slot + '(' + c.itemId + ')'; }).join('|');
       }).join('；'));
-    /* 诊断：确认记录器是否真的被 game.js 调用（区分「逻辑没跑」和「UI 没被调用」） */
-    var dUI = t1.Game.deps.ui, dRec = dUI && dUI.rec;
-    ck.ok('G2.30', true,
-      '诊断（不给结论，只报数）：typeof playHostOpen=' + (typeof dUI.playHostOpen) +
-      ' typeof openModal=' + (typeof dUI.openModal) +
-      '；recorded renders=' + dRec.renders + ' lines=' + dRec.lines.length + ' reveals=' + dRec.reveals.length +
-      ' modals=' + dRec.modals.length + ' hostOpens=' + dRec.hostOpens.length +
-      ' toasts=' + dRec.toasts.length + ' banners=' + dRec.banners.length + ' flashes=' + dRec.flashes.length);
+    /* 记录器自证：确认 game.js 真的调到了 UI（区分「逻辑没跑」与「UI 没被调用」）。
+       注意取本轮 trace 自己捕获的 UI/rec —— Game 是单例，后续用例的 mkGame 会换掉 Game.deps.ui。 */
+    var dUI = t1.ui, dRec = t1.rec;
+    var recOk = !!dRec && typeof dUI.playHostOpen === 'function' && typeof dUI.openModal === 'function' &&
+      dRec.renders > 0 && dRec.controls > 0 && dRec.hostOpens.length === t1.rounds.length &&
+      dRec.reveals.length === 2 && dRec.modals.length >= 1 && dRec.lines.length >= 3;
+    ck.ok('G2.30', recOk,
+      '记录型 UI 确实收到 game.js 的调用：渲染/控件/HUD 刷新/开门/开奖/弹层/旁白台词次数与三轮剧本相符',
+      'playHostOpen=' + typeof dUI.playHostOpen + ' openModal=' + typeof dUI.openModal +
+      '；renders=' + (dRec && dRec.renders) + '(期望≥1) setControls=' + (dRec && dRec.controls) + '(期望≥1)' +
+      '；hostOpens=' + (dRec && dRec.hostOpens.length) + '(期望' + t1.rounds.length + '；R3 收手不开奖)' +
+      '；reveals=' + (dRec && dRec.reveals.length) + '(期望2) modals=' + (dRec && dRec.modals.length) + '(期望≥1)' +
+      '；lines=' + (dRec && dRec.lines.length) + '(期望≥3)');
     var r1 = t1.rounds[0], r2r = t1.rounds[1], r3 = t1.rounds[2];
     ck.eq('G2.8', r1.roundResult && r1.roundResult.itemId, 'small_prize', '第 1 轮结算物品=小奖（建立正反馈）');
     ck.eq('G2.9', r2r.roundResult && r2r.roundResult.itemId, 'big_prize', '第 2 轮结算物品=大奖（质疑反杀）');
@@ -894,11 +913,21 @@ async function main() {
       'GAME_OVER 弹层标题「耐心归零」且正文说明原因',
       '实际 kind=' + (goModal && goModal.kind) + ' title=' + (goModal && goModal.title) + ' 全部弹层=' + jsonOf(g3.rec.modals.map(function (m) { return m.kind; })));
     ck.ok('G3.4', /非真实货币/.test((goModal && goModal.body) || ''), 'GAME_OVER 页含娱乐声明');
-    ck.ok('G3.8', true,
-      '实现备注：根因行 js/effects.js:254 曾直接写 next.phase="GAME_OVER" 绕过 setState，' +
-      '导致 setState(REVEAL) 被 ALLOWED 拒绝、结算层永不弹出（死屏）。lead 已在 js/game.js 的 reveal() 侧根治' +
-      '（进入前备份 prevPhase，applyEffect 后还原再 setState），故本用例现在稳定通过；' +
-      '内容层若删除 effects.js:254 的相位写入，可进一步消除该隐患');
+    /* 死屏回归防线：耐心归零后必须能一键回到演示起点（曾因 setState(REVEAL) 被 ALLOWED 拒绝而死屏） */
+    var restartBtns = ((goModal && goModal.actions) || []).filter(function (a) { return a.choice === 'restart'; });
+    var coinsAtDeath = G3.state.coins;
+    var restartRet = G3.action({ type: 'modal_choice', choice: 'restart' });
+    var restarted = G3.state;
+    ck.ok('G3.8', restartBtns.length === 1 && restartRet === true &&
+      ['IDLE', 'ROUND_INTRO', 'NARRATOR', 'PICK'].indexOf(restarted.phase) >= 0 &&
+      restarted.coins === 100 && restarted.suspicion === 2 && restarted.patience === 3 &&
+      restarted.round === 1 && restarted.pickedSlot === null && restarted.hostOpenedSlot === null,
+      '死屏回归防线：耐心归零结算层提供「再来一局」，点击后回到演示起点（金币 ' + coinsAtDeath + ' → ' +
+      restarted.coins + '、耐心 → ' + restarted.patience + '、轮次 → ' + restarted.round +
+      '、phase=' + restarted.phase + '，即已在新一局的 ROUND_INTRO/IDLE 上而非 GAME_OVER）',
+      'restart 按钮数=' + restartBtns.length + ' 返回值=' + restartRet + ' phase=' + restarted.phase +
+      ' coins=' + restarted.coins + ' suspicion=' + restarted.suspicion + ' patience=' + restarted.patience +
+      ' round=' + restarted.round + ' pickedSlot=' + restarted.pickedSlot + ' hostOpenedSlot=' + restarted.hostOpenedSlot);
   }
 
   /* G3.5 质疑失败扣耐心 → GAME_OVER（注入必败旁白，验证 challenge 分支） */
@@ -1307,12 +1336,239 @@ async function main() {
     '阶段 6 P0 断网可跑：js/*.js 零 fetch / XMLHttpRequest / WebSocket / EventSource / sendBeacon / 动态 import()',
     netHits.slice(0, 5).join('\n         '));
 
-  ck.ok('G7.8', true,
-    '断网等价性：本套件全程零网络调用（node 侧无 fetch/XHR，页面资源全为本地相对路径），' +
-    '因此断网与联网下逻辑、计时、结算结果一致；浏览器渲染证据见 tests/dom-smoke.js（Node DOM 垫片，真实执行 index.html + js/*.js）与 headless-check.js（浏览器可用时）');
+  /* G7.8 阶段 6 P0「断网跑通」的静态自证（可重复、非恒真）：
+     (a) 在全新 vm 上下文里把 fetch / XMLHttpRequest / WebSocket / EventSource 换成
+         「一旦被调用就记录并抛错」的毒丸，同时 navigator.onLine=false，再按首页顺序加载
+         全部 6 个经典脚本：必须零异常、零毒丸命中，且 Game / GameData 都在。
+     (b) index.html 引用的每个资源逐个 fs.existsSync 检查、且不得是 http(s):// 或协议相对地址。
+     (c) style.css 的 url() 与 @import 也只能指向本地存在的文件。 */
+  var poisonHits = [];
+  function poison(name) {
+    return function () { poisonHits.push(name); throw new Error('离线环境不得调用 ' + name); };
+  }
+  var offline = L.loadScripts({
+    withDom: false,
+    globals: {
+      fetch: poison('fetch'), XMLHttpRequest: poison('XMLHttpRequest'),
+      WebSocket: poison('WebSocket'), EventSource: poison('EventSource'),
+      sendBeacon: poison('sendBeacon'), importScripts: poison('importScripts'),
+      navigator: { onLine: false, userAgent: 'offline-test' },
+      location: { protocol: 'file:', href: 'file:///index.html', reload: function () {} }
+    }
+  });
+  var htmlRefs = [], htmlMissing8 = [], htmlExt8 = [];
+  var re8 = /(?:src|href)\s*=\s*["']([^"']+)["']/gi, m8;
+  while ((m8 = re8.exec(htmlTxt)) !== null) {
+    var r8 = m8[1];
+    htmlRefs.push(r8);
+    if (/^(https?:)?\/\//i.test(r8)) { htmlExt8.push(r8); continue; }
+    if (/^(data:|mailto:|#)/i.test(r8)) continue;
+    if (!L.fileExists(path.join(L.ROOT, r8.replace(/[?#].*$/, '')))) htmlMissing8.push(r8);
+  }
+  var cssTxt = L.readText(path.join(L.ROOT, 'style.css'));
+  var cssRefs = [], cssBad8 = [];
+  var reCss8 = /url\(\s*["']?([^"')]+)["']?\s*\)|@import\s+(?:url\(\s*)?["']([^"']+)["']/gi, mCss;
+  while ((mCss = reCss8.exec(cssTxt)) !== null) {
+    var c8 = mCss[1] || mCss[2];
+    if (!c8 || /^(data:|#)/i.test(c8)) continue;
+    cssRefs.push(c8);
+    if (/^(https?:)?\/\//i.test(c8) || !L.fileExists(path.join(L.ROOT, c8.replace(/[?#].*$/, '')))) cssBad8.push(c8);
+  }
+  var dataArtifactOk = L.fileExists(path.join(L.JS_DIR, 'data.js'));
+  ck.ok('G7.8', offline.missing.length === 0 && offline.errors.length === 0 && poisonHits.length === 0 &&
+    !!offline.sandbox.Game && !!offline.sandbox.GameData && dataArtifactOk &&
+    htmlMissing8.length === 0 && htmlExt8.length === 0 && cssBad8.length === 0 && htmlRefs.length >= 6,
+    '阶段 6 P0「断网跑通」静态自证：毒化 fetch/XHR/WebSocket/EventSource + navigator.onLine=false 的全新上下文里' +
+    '重新加载 ' + offline.loaded.length + ' 个脚本零异常、零网络调用；index.html 引用的 ' + htmlRefs.length +
+    ' 个资源逐个 fs.existsSync 通过且零外链；style.css 的 ' + cssRefs.length + ' 个 url()/@import 全部本地存在；' +
+    'js/data.js 产物在位（Game/GameData 均已挂载）',
+    'missing=' + jsonOf(offline.missing) + ' errors=' + jsonOf(offline.errors.slice(0, 2)) +
+    ' 毒丸命中=' + jsonOf(poisonHits) + ' Game=' + !!offline.sandbox.Game + ' GameData=' + !!offline.sandbox.GameData +
+    ' data.js=' + dataArtifactOk + ' 外链=' + jsonOf(htmlExt8) + ' 缺失引用=' + jsonOf(htmlMissing8) +
+    ' css非法=' + jsonOf(cssBad8));
 
   ck.ok('G7.9', L.fileExists(path.join(L.ROOT, 'style.css')) && L.fileExists(path.join(L.ROOT, 'index.html')),
     '阶段 0 P0 工程结构：index.html + style.css 均存在（双击可跑的最小集合）');
+
+  ck.section('阶段 1/2/4 P0｜主持人硬不变量、质疑每轮一次、文案不剧透');
+
+  /* ---------- HOST-INVARIANT：真实 chooseDoor → UI playHostOpen 链路上的硬不变量 ---------- */
+  /* 走真实链路（不是直接调 hostPick）：包一层 deps.ui.playHostOpen 记录主持人实际打开了哪扇、
+     当时玩家选了哪扇、调用时相位；forceR3Slot0 时再包 chooseDoor，复刻 lead 的剧本碰撞用例。 */
+  async function hostTrace(opts) {
+    opts = opts || {};
+    var g8 = mkGame('demo', {});
+    var Game8 = g8.Game;
+    var rows8 = [], injections = [];
+    var ui8 = g8.deps.ui;
+    var innerPlay = ui8.playHostOpen;
+    ui8.playHostOpen = function (slot, itemId) {
+      var s = Game8.state;
+      rows8.push({
+        round: s.round, phase: s.phase,
+        doors: s.doors.map(function (d) { return d.itemId; }),
+        picked: s.pickedSlot,
+        pickedItem: (s.pickedSlot == null || !s.doors[s.pickedSlot]) ? null : s.doors[s.pickedSlot].itemId,
+        host: slot, hostItem: itemId, stateHost: s.hostOpenedSlot,
+        opened: slot == null ? null : !!s.doors[slot].opened,
+        scriptFallback: !!s.hostScriptFallback
+      });
+      return innerPlay.call(ui8, slot, itemId);
+    };
+    var origChoose = Game8.chooseDoor;
+    Game8.chooseDoor = function (slot) {
+      var s = Game8.state;
+      if (opts.forceR3Slot0 && s.round >= 3 && slot !== 0) {
+        injections.push({ round: s.round, from: slot, fromItem: s.doors[slot] && s.doors[slot].itemId, to: 0 });
+        slot = 0;
+      }
+      return origChoose.call(Game8, slot);
+    };
+    var out8 = await Game8.autoDemo();
+    Game8.chooseDoor = origChoose;
+    ui8.playHostOpen = innerPlay;
+    return { out: out8, rows: rows8, injections: injections, Game: Game8, rec: g8.rec };
+  }
+
+  /* G8.1 演示剧本正常路径（3 轮） */
+  var ht = await hostTrace({});
+  var htBad = ht.rows.filter(function (r) {
+    return r.host == null || r.host === r.picked || r.hostItem === 'big_prize' || r.opened !== true ||
+      r.host !== r.stateHost || r.phase !== 'HOST_OPEN';
+  });
+  ck.ok('G8.1', ht.rows.length === 3 && htBad.length === 0 && !!(ht.out && ht.out.final),
+    'HOST-INVARIANT（演示剧本正常路径，真实 chooseDoor → UI playHostOpen 链路）：' + ht.rows.length +
+    ' 轮全部满足「主持人所开门 ≠ 玩家所选门、≠ 大奖门、该门确实为已开、state.hostOpenedSlot 与 UI 回调一致、调用时相位=HOST_OPEN」',
+    '违规=' + jsonOf(htBad) + '；逐轮=' + jsonOf(ht.rows.map(function (r) {
+      return 'R' + r.round + ' 门面' + r.doors.join('/') + ' 选' + r.picked + '(' + r.pickedItem +
+        ') 开' + r.host + '(' + r.hostItem + ')';
+    })));
+
+  /* G8.1b lead 给的剧本碰撞用例：R3 门面 trap/big_prize/empty、剧本 hostOpensSlot=0、强制玩家选 slot0 */
+  var ht2 = await hostTrace({ forceR3Slot0: true });
+  var ht2Bad = ht2.rows.filter(function (r) {
+    return r.host == null || r.host === r.picked || r.hostItem === 'big_prize' || r.opened !== true ||
+      r.host !== r.stateHost;
+  });
+  var r3row = ht2.rows.filter(function (r) { return r.round === 3; })[0] || null;
+  ck.ok('G8.1b', ht2.injections.length >= 1 && !!r3row && r3row.picked === 0 && r3row.host !== 0 &&
+    r3row.hostItem !== 'big_prize' && r3row.host === 2 && r3row.scriptFallback === true && ht2Bad.length === 0,
+    'HOST-INVARIANT（剧本碰撞：R3 强制玩家选 slot0）第 3 轮门面 ' + (r3row ? r3row.doors.join('/') : '?') +
+    '，剧本 hostOpensSlot=0 与玩家所选门撞车 → 退化为真实 hostPick，开 ' +
+    (r3row ? r3row.host + '(' + r3row.hostItem + ')' : '?') +
+    '（不是玩家所选门、不是大奖，hostScriptFallback=true），三轮零违规',
+    '注入=' + jsonOf(ht2.injections) + '；R3=' + jsonOf(r3row) + '；违规=' + jsonOf(ht2Bad));
+
+  /* G8.1c 非剧本轮：12 个普通模式种子 × 3 个所选，走真实 pick 动作链路 */
+  var freeBad = [], freeCount = 0;
+  for (var s8 = 0; s8 < 12; s8++) {
+    for (var sl8 = 0; sl8 < 3; sl8++) {
+      var gf = mkGame('normal', {});
+      gf.Game.init({ mode: 'normal', seed: 8000 + s8, deps: gf.deps });
+      gf.Game.start('normal');
+      var okP8 = await until(function () { return gf.Game.state.phase === 'PICK'; }, 2000);
+      if (!okP8) { freeBad.push('seed' + (8000 + s8) + ' 未到 PICK'); continue; }
+      var doorsBefore8 = gf.Game.state.doors.map(function (d) { return d.itemId; });
+      gf.Game.action({ type: 'pick', slot: sl8 });
+      var okD8 = await until(function () { return gf.Game.state.phase === 'DECIDE'; }, 2000);
+      var st8 = gf.Game.state;
+      freeCount++;
+      var hostItem8 = st8.hostOpenedSlot == null ? null : st8.doors[st8.hostOpenedSlot].itemId;
+      var openedCount8 = st8.doors.filter(function (d) { return d.opened; }).length;
+      if (!okD8 || st8.hostOpenedSlot == null || st8.hostOpenedSlot === sl8 || hostItem8 === 'big_prize' ||
+          !st8.doors[st8.hostOpenedSlot].opened || openedCount8 !== 1) {
+        freeBad.push('seed' + (8000 + s8) + ' 选' + sl8 + ' 门面' + doorsBefore8.join('/') +
+          ' → 开' + st8.hostOpenedSlot + '(' + hostItem8 + ') 已开数=' + openedCount8 + ' okD=' + okD8);
+      }
+    }
+  }
+  ck.ok('G8.1c', freeCount === 36 && freeBad.length === 0,
+    'HOST-INVARIANT（非剧本轮，普通模式 12 种子 × 3 所选 = ' + freeCount +
+    ' 次真实 pick 动作链路）：主持人所开门全部 ≠玩家所选门、≠大奖门、恰好开 1 扇',
+    jsonOf(freeBad));
+
+  /* ---------- CHALLENGE-ONCE：同一轮第二次质疑必须被拒且不动数值，换轮后可再质疑 ---------- */
+  var g82 = mkGame('demo', {});
+  var G82 = g82.Game;
+  G82.start('demo');
+  var ok82 = await until(function () { return G82.state.phase === 'PICK'; }, 5000);
+  var slot82 = G82.state.doors.map(function (d) { return d.itemId; }).indexOf('small_prize');
+  G82.action({ type: 'pick', slot: slot82 });
+  await until(function () { return G82.state.phase === 'DECIDE'; }, 5000);
+  var c0 = G82.state.coins, sus0 = G82.state.suspicion, pat0 = G82.state.patience;
+  var first82 = G82.action({ type: 'decide', choice: 'challenge' });
+  var lc1 = G82.state.lastChallenge || {};
+  var c1 = G82.state.coins, sus1 = G82.state.suspicion, flag1 = G82.state.challengedThisRound;
+  var second82 = G82.action({ type: 'decide', choice: 'challenge' });
+  var c2 = G82.state.coins, sus2 = G82.state.suspicion;
+  var r1DeltaOk = lc1.ok ? (c1 === c0 + 20) : (c1 === c0 - 20 && G82.state.patience === pat0 - 1);
+  G82.action({ type: 'decide', choice: 'stick' });
+  await until(function () { return G82.state.phase === 'SETTLE_ROUND'; }, 5000);
+  G82.action({ type: 'settle', choice: 'continue' });
+  var okR2 = await until(function () { return G82.state.round === 2 && G82.state.phase === 'PICK'; }, 5000);
+  var slotR2 = G82.state.doors.map(function (d) { return d.itemId; }).indexOf('big_prize');
+  G82.action({ type: 'pick', slot: slotR2 });
+  await until(function () { return G82.state.phase === 'DECIDE'; }, 5000);
+  var flagR2 = G82.state.challengedThisRound, susR2Before = G82.state.suspicion;
+  var third82 = G82.action({ type: 'decide', choice: 'challenge' });
+  var susR2After = G82.state.suspicion;
+  var okChalR2 = !!(G82.state.lastChallenge && G82.state.lastChallenge.ok);
+  ck.ok('G8.2', ok82 && first82 === true && second82 === false && c2 === c1 && sus2 === sus1 && flag1 === true &&
+    r1DeltaOk && sus1 === sus0 - 1 && okR2 && flagR2 === false && third82 === true &&
+    susR2After === susR2Before - 1 && okChalR2 === true,
+    'CHALLENGE-ONCE：R1 第 1 次质疑 true（金币 ' + c0 + '→' + c1 + '、怀疑值 ' + sus0 + '→' + sus1 + '，' +
+    (lc1.ok ? '拆穿成功 +20' : '拆穿失败 −20 且耐心 −1') + '），第 2 次 false 且金币/怀疑值完全不变（' +
+    c2 + '/' + sus2 + '）；换到 R2 后 challengedThisRound 已重置，第 3 次质疑 true 且演示 R2 的「质疑反杀」仍成立' +
+    '（怀疑值 ' + susR2Before + '→' + susR2After + '，lastChallenge.ok=' + okChalR2 + '）',
+    'first=' + first82 + ' second=' + second82 + ' c1=' + c1 + ' c2=' + c2 + ' sus2=' + sus2 +
+    ' R1flag=' + flag1 + ' R1ok=' + lc1.ok + ' R2flag=' + flagR2 + ' third=' + third82 +
+    ' R2ok=' + okChalR2 + ' R2怀疑=' + susR2Before + '→' + susR2After + ' okR2=' + okR2);
+
+  /* ---------- HINT-NO-SPOILER：风险提示/兜底文案不得剧透哪轮撒谎、哪轮说真话 ---------- */
+  var SPOIL8 = /撒谎|说真话|真话|不老实|说谎/;
+  var spoilerWords = /\b(?:lie|lies|lying|truth|truthful|spoiler)\b/i;
+  var cfgPath8 = path.join(L.ROOT, 'data', 'config.json');
+  var cfgRaw8 = L.readText(cfgPath8);
+  var cfgObj8 = JSON.parse(cfgRaw8);
+  var cfgStrings8 = [];
+  (function collect8(v, p) {
+    if (typeof v === 'string') { cfgStrings8.push({ p: p, text: v }); return; }
+    if (Array.isArray(v)) { v.forEach(function (x, i) { collect8(x, p + '[' + i + ']'); }); return; }
+    if (v && typeof v === 'object') { Object.keys(v).forEach(function (k) { collect8(v[k], p + '.' + k); }); }
+  })(cfgObj8, 'config');
+  var cfgValueSpoil8 = cfgStrings8.filter(function (s2) { return SPOIL8.test(s2.text) || spoilerWords.test(s2.text); })
+    .map(function (s2) { return s2.p + ' = ' + JSON.stringify(s2.text); });
+  var cfgRawSpoil8 = [];
+  cfgRaw8.split(/\r?\n/).forEach(function (line, i) {
+    if (SPOIL8.test(line)) cfgRawSpoil8.push('config.json:' + (i + 1) + ' ' + line.trim());
+  });
+  var gameSrc8 = L.readText(path.join(L.JS_DIR, 'game.js'));
+  var gameSpoil8 = [], gameLitSpoil8 = [], gameCodeLines8 = 0;
+  gameSrc8.split(/\r?\n/).forEach(function (line, i) {
+    var t = line.trim();
+    if (t.charAt(0) === '*' || t.indexOf('//') === 0 || t.indexOf('/*') === 0) return;  /* 注释不算玩家可见文案 */
+    gameCodeLines8++;
+    if (SPOIL8.test(line)) gameSpoil8.push('js/game.js:' + (i + 1) + ' ' + t);
+    var reL8 = /["']([^"']*)["']/g, mL8;
+    while ((mL8 = reL8.exec(line)) !== null) {
+      if (spoilerWords.test(mL8[1])) gameLitSpoil8.push('js/game.js:' + (i + 1) + ' ' + mL8[0]);
+    }
+  });
+  ck.ok('G8.3', cfgRawSpoil8.length === 0 && cfgValueSpoil8.length === 0 && gameSpoil8.length === 0 &&
+    gameLitSpoil8.length === 0 && cfgStrings8.length >= 20 && gameCodeLines8 >= 300,
+    'HINT-NO-SPOILER（文件内容断言，不靠人眼）：data/config.json 的 ' + cfgStrings8.length +
+    ' 个字符串值与全部 ' + cfgRaw8.split(/\r?\n/).length + ' 行、js/game.js 的 ' + gameCodeLines8 +
+    ' 行非注释代码，都不含「撒谎/说真话/真话/不老实/说谎」及英文 lie/lies/lying/truth/spoiler 字样' +
+    '（规则说明只允许出现在注释里）',
+    'config行命中=' + jsonOf(cfgRawSpoil8) + ' config值命中=' + jsonOf(cfgValueSpoil8) +
+    ' gamejs行命中=' + jsonOf(gameSpoil8) + ' gamejs字面量命中=' + jsonOf(gameLitSpoil8));
+
+  var hints8 = cfgObj8.roundHints || {};
+  var hintKeys8 = Object.keys(hints8);
+  ck.ok('G8.4', hintKeys8.length >= 4 && hintKeys8.every(function (k) {
+    return typeof hints8[k] === 'string' && hints8[k].length > 0;
+  }), '阶段 3 P0「每轮开始显示风险提示」：config.roundHints 覆盖 ' + hintKeys8.length + ' 轮且文案全部非空',
+    jsonOf(hints8));
 }
 
 main().then(function () {
