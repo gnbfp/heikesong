@@ -24,6 +24,7 @@ var OUT_FILE = path.join(ROOT, 'js', 'data.js');
 /* 生成产物里记录的数据来源（POSIX 相对路径，顺序固定，保证确定性）。 */
 var GENERATED_FROM = [
   'data/items.json',
+  'data/shop.json',
   'data/config.json',
   'data/narrator.json',
   'data/seed_demo.json'
@@ -62,6 +63,29 @@ var KIND_VALUES = ['prize', 'no-prize', 'hazard', 'item'];
 
 /* 兼容别名：闭嘴卡在部分模块里叫 shutup_card（同一份定义，不占新物品名额）。 */
 var ITEM_ALIASES = { shutup_card: 'mute_card' };
+
+/* docs/设计契约_商店与美术.md §2.2 商品表 —— 价格 / 单局上限逐字硬编码为构建期防线。
+   cap === null 表示不限购（当前只有神秘盒）。 */
+var EXPECT_SHOP = [
+  { id: 'switch_ticket', name: '换门券', price: 25, cap: 3, kind: 'bag', icon: 'ticket' },
+  { id: 'mute_card', name: '闭嘴卡', price: 20, cap: 2, kind: 'bag', icon: 'mute' },
+  { id: 'double_coins', name: '双倍金币', price: 40, cap: 2, kind: 'bag', icon: 'double' },
+  { id: 'fuse', name: '保险丝', price: 35, cap: 2, kind: 'bag', icon: 'fuse' },
+  { id: 'mystery_box', name: '神秘盒', price: 15, cap: null, kind: 'instant', icon: 'box' },
+  { id: 'patience_charm', name: '续命符', price: 60, cap: 2, kind: 'instant', icon: 'charm' }
+];
+var SHOP_KINDS = ['bag', 'instant'];
+/* 商店独占商品：只卖不进门的物品池（门的 9 种牌面不受商店影响）。
+   fuse 是背包类但不在门池里；patience_charm 是购买即结算。 */
+var SHOP_ONLY_IDS = ['fuse', 'patience_charm'];
+/* ui.js 的 inline SVG 符号名白名单（<symbol id="ic-ticket"> 之类），不得引外部图片。 */
+var SHOP_ICONS = ['ticket', 'mute', 'double', 'fuse', 'box', 'charm'];
+var SHOP_DESC_MAX = 22;
+/* 契约 §2：换门 15 金币；商店只在 DECIDE / SETTLE_ROUND 可开；结算页统计商店花费。 */
+var EXPECT_ECONOMY = { switchCost: 15, shopOpenStates: ['DECIDE', 'SETTLE_ROUND'], spentStat: true };
+/* 续命符的「上限 5」指【耐心资源天花板】（config.initial.patience=3 只是初值），
+   与商店的【单局限购 cap=2】是两件事，故落成独立字段 patienceCap，二者解耦。 */
+var EXPECT_PATIENCE_CAP = 5;
 
 /* 《开工清单》阶段 4 固定种子剧本 —— 逐字比对（键序也固定）。 */
 var EXPECT_SEED = {
@@ -110,6 +134,7 @@ var itemsDoc = readJson('items.json');
 var config = readJson('config.json');
 var narratorDoc = readJson('narrator.json');
 var seedDemo = readJson('seed_demo.json');
+var shopDoc = readJson('shop.json');
 
 if (!itemsDoc || !Array.isArray(itemsDoc.items)) fail('items.json 顶层需要 { source, items: [...] }');
 var itemList = itemsDoc.items;
@@ -181,6 +206,69 @@ var roundHints = need('roundHints', config.roundHints);
 var maxChars = Number((config.lies || {}).maxChars || 28);
 var linesPerRound = Number((config.lies || {}).linesPerRound || 2);
 if (linesPerRound !== 2) fail('lies.linesPerRound 应为 2（引擎每轮播 2 句）');
+
+/* --------------------------- 校验 2b：economy + 商店商品表（设计契约 §2.1/§2.2/§2.3） */
+var eco = need('economy', config.economy);
+if (Number(eco.switchCost) !== EXPECT_ECONOMY.switchCost) {
+  fail('economy.switchCost 应为 ' + EXPECT_ECONOMY.switchCost + '（契约 §2.1），实际 ' + eco.switchCost);
+}
+if (stableStringify(eco.shopOpenStates) !== stableStringify(EXPECT_ECONOMY.shopOpenStates)) {
+  fail('economy.shopOpenStates 应为 ' + JSON.stringify(EXPECT_ECONOMY.shopOpenStates) + '，实际 ' + JSON.stringify(eco.shopOpenStates));
+}
+if (eco.spentStat !== true) fail('economy.spentStat 应为 true（结算页要统计商店花费）');
+
+if (!shopDoc || !Array.isArray(shopDoc.shop)) fail('shop.json 顶层需要 { source, shop: [...] }');
+var shopList = shopDoc.shop;
+if (shopList.length !== EXPECT_SHOP.length) fail('商品数量应为 ' + EXPECT_SHOP.length + '，实际 ' + shopList.length);
+shopList.forEach(function (sp, idx) {
+  var exp = EXPECT_SHOP[idx];
+  if (!sp || typeof sp !== 'object') fail('商品 #' + (idx + 1) + ' 不是对象');
+  if (sp.id !== exp.id) fail('商品顺序/ id 不符：第 ' + (idx + 1) + ' 项应为 ' + exp.id + '，实际 ' + sp.id);
+  if (sp.name !== exp.name) fail(sp.id + '.name 应为 ' + exp.name + '，实际 ' + sp.name);
+  if (Number(sp.price) !== exp.price) fail(sp.id + '.price 应为 ' + exp.price + '（契约 §2.2），实际 ' + sp.price);
+  var spCap = (sp.cap == null) ? null : Number(sp.cap);
+  if (spCap !== exp.cap) {
+    fail(sp.id + '.cap 应为 ' + (exp.cap === null ? '不限（null）' : exp.cap) + '（契约 §2.2），实际 ' + sp.cap);
+  }
+  if (sp.kind !== exp.kind) fail(sp.id + '.kind 应为 ' + exp.kind + '（bag=进背包 / instant=购买即结算），实际 ' + sp.kind);
+  if (SHOP_KINDS.indexOf(sp.kind) < 0) fail(sp.id + '.kind 非法：' + sp.kind);
+  if (sp.icon !== exp.icon) fail(sp.id + '.icon 应为 ' + exp.icon + '（对应 ui.js 的 ic-' + exp.icon + ' 符号），实际 ' + sp.icon);
+  if (SHOP_ICONS.indexOf(sp.icon) < 0) fail(sp.id + '.icon 不在 ui 符号白名单：' + sp.icon);
+  if (!sp.desc) fail(sp.id + ' 缺 desc（每件一句、≤' + SHOP_DESC_MAX + ' 字、要说清买了怎么用）');
+  if (String(sp.desc).length > SHOP_DESC_MAX) fail(sp.id + '.desc 超过 ' + SHOP_DESC_MAX + ' 字：' + String(sp.desc).length + ' 字');
+  /* 神秘盒必须复用 config.mystery 的结果表，商品条目不得自带 outcomes。 */
+  if (sp.outcomes) fail(sp.id + ' 不得自带 outcomes —— 神秘盒复用 config.mystery（契约 §2.2）');
+  /* 商店独占商品不得混进门的物品池；与物品池同名的商品（换门券等）天然复用同一份定义。 */
+  if (SHOP_ONLY_IDS.indexOf(sp.id) >= 0 && seen[sp.id]) {
+    fail('商店独占商品 ' + sp.id + ' 不得出现在物品池 items.json（门的 9 种牌面保持不动）');
+  }
+});
+if (shopList[5].kind !== 'instant' || Number(shopList[5].patienceCap) !== EXPECT_PATIENCE_CAP) {
+  fail('patience_charm 应为 instant 且 patienceCap=' + EXPECT_PATIENCE_CAP + '（耐心资源天花板，与单局限购 cap=2 解耦）');
+}
+if (shopList[4].kind !== 'instant' || shopList[4].cap != null) fail('mystery_box 必须是 instant 且不限购（cap=null）');
+var mystery = need('mystery', config.mystery);
+if (!Array.isArray(mystery.outcomes) || !mystery.outcomes.length) fail('config.mystery.outcomes 不能为空（神秘盒复用）');
+mystery.outcomes.forEach(function (o, i) {
+  if (!(Number(o.weight) > 0)) fail('config.mystery.outcomes[' + i + '].weight 必须是正数');
+});
+
+/* 归一化商品条目：固定键序 + 派生布尔，供引擎与 ui 直接读（unlimited=不限购 / immediate=购买即结算）。 */
+var shop = shopList.map(function (sp) {
+  var entry = {
+    id: sp.id,
+    name: sp.name,
+    price: Number(sp.price),
+    cap: (sp.cap == null) ? null : Number(sp.cap),
+    kind: sp.kind,
+    icon: sp.icon,
+    desc: sp.desc,
+    unlimited: sp.cap == null,
+    immediate: sp.kind === 'instant'
+  };
+  if (Number(sp.patienceCap) > 0) entry.patienceCap = Number(sp.patienceCap);
+  return entry;
+});
 
 /* --------------------------------------------------- 校验 3：旁白语料 + 彩蛋覆盖 */
 if (!narratorDoc || !Array.isArray(narratorDoc.lines)) fail('narrator.json 顶层需要 { source, lines: [...] }');
@@ -313,6 +401,16 @@ out.push('  }');
 out.push('');
 out.push('  function itemById(id) { return (id && items[id]) || null; }');
 out.push('');
+out.push('  /* 商店商品表（docs/设计契约_商店与美术.md §2.2）：cap=null 表示不限购，');
+out.push('     unlimited / immediate 为派生布尔，价格与单局上限由契约冻结。 */');
+out.push('  var shop = ' + stableStringify(shop).split('\n').join('\n  ') + ';');
+out.push('');
+out.push('  /** 按 id 取商品定义，未知 id 返回 null（引擎 buy/useItem 与 ui 渲染共用）。 */');
+out.push('  function shopById(id) {');
+out.push('    for (var i = 0; i < shop.length; i++) if (shop[i].id === id) return shop[i];');
+out.push('    return null;');
+out.push('  }');
+out.push('');
 out.push('  /**');
 out.push('   * 结算评级：高轮次收手（config.cashoutMaster）优先，其次按 config.ratings 金币档位。');
 out.push('   * 确定性纯函数，不改任何状态。');
@@ -347,6 +445,8 @@ out.push('    itemAliases: itemAliases,');
 out.push('    itemById: itemById,');
 out.push('    poolForRound: poolForRound,');
 out.push('    ratingFor: ratingFor,');
+out.push('    shop: shop,');
+out.push('    shopById: shopById,');
 out.push('    config: config,');
 out.push('    narrator: narrator,');
 out.push('    seedDemo: seedDemo');
@@ -399,6 +499,44 @@ if (GameData.ratingFor(500, 2).title !== '反杀旁白') fail('ratingFor(500) �
 if (GameData.ratingFor(250, 4, { cashout: true }).title !== '见好就收大师') fail('第 4 轮 250 金币收手应为「见好就收大师」');
 if (GameData.ratingFor(150, 4, { cashout: true }).title !== '普通赌徒') fail('未达 minCoins 的收手不应给「见好就收大师」');
 
+/* 商店契约（设计契约 §2.1/§2.2）：价格、上限、派生布尔、economy 都必须真进了产物。 */
+if (!Array.isArray(GameData.shop) || GameData.shop.length !== 6) fail('GameData.shop 应为 6 件商品');
+var shopPrices = { switch_ticket: 25, mute_card: 20, double_coins: 40, fuse: 35, mystery_box: 15, patience_charm: 60 };
+Object.keys(shopPrices).forEach(function (sid) {
+  var sp = GameData.shopById(sid);
+  if (!sp) fail('shopById(' + sid + ') 取不到商品');
+  if (sp.price !== shopPrices[sid]) fail(sid + '.price 应为 ' + shopPrices[sid] + '，产物里是 ' + sp.price);
+});
+if (GameData.shopById('switch_ticket').cap !== 3 || GameData.shopById('switch_ticket').unlimited !== false) {
+  fail('换门券单局上限应为 3');
+}
+if (GameData.shopById('mute_card').cap !== 2 || GameData.shopById('double_coins').cap !== 2 || GameData.shopById('fuse').cap !== 2) {
+  fail('闭嘴卡 / 双倍金币 / 保险丝的单局上限应为 2');
+}
+if (GameData.shopById('mystery_box').cap !== null || GameData.shopById('mystery_box').unlimited !== true) {
+  fail('神秘盒应不限购（cap=null / unlimited=true）');
+}
+if (GameData.shopById('mystery_box').immediate !== true) fail('神秘盒应为即时商品（immediate=true）');
+if (GameData.shopById('patience_charm').immediate !== true) fail('续命符应为即时商品（immediate=true）');
+if (GameData.shopById('patience_charm').cap !== 2 || GameData.shopById('patience_charm').patienceCap !== 5) {
+  fail('续命符：单局限购 2、耐心天花板 5');
+}
+if (GameData.shopById('switch_ticket').immediate !== false) fail('背包商品 immediate 应为 false');
+if (GameData.shopById('nope') !== null) fail('shopById 未知 id 应返回 null');
+GameData.shop.forEach(function (sp) {
+  if (['bag', 'instant'].indexOf(sp.kind) < 0) fail(sp.id + '.kind 非法：' + sp.kind);
+  if (!sp.desc || String(sp.desc).length > SHOP_DESC_MAX) fail(sp.id + '.desc 缺失或超过 ' + SHOP_DESC_MAX + ' 字');
+  if (SHOP_ICONS.indexOf(sp.icon) < 0) fail(sp.id + '.icon 非法：' + sp.icon);
+});
+if (GameData.config.economy.switchCost !== 15) fail('GameData.config.economy.switchCost 应为 15');
+if (stableStringify(GameData.config.economy.shopOpenStates) !== stableStringify(['DECIDE', 'SETTLE_ROUND'])) {
+  fail('GameData.config.economy.shopOpenStates 应为 [DECIDE, SETTLE_ROUND]');
+}
+if (GameData.config.economy.spentStat !== true) fail('GameData.config.economy.spentStat 应为 true');
+/* 商店数据不得混进物品池：itemList 仍必须 9 项、items 仍必须 9 主条目 + 别名。 */
+if (GameData.items.fuse || GameData.items.patience_charm) fail('商店独占商品 fuse / patience_charm 不得进入物品池 items');
+if (GameData.itemList.length !== 9) fail('商店改动不得影响物品池数量（itemList 应仍为 9）');
+
 /* ------------------------------------------------------------------- 写文件 */
 if (process.argv.indexOf('--check') >= 0) {
   var current = '';
@@ -417,5 +555,6 @@ if (process.argv.indexOf('--check') >= 0) {
 
 fs.writeFileSync(OUT_FILE, code, 'utf8');
 console.log('[build-data] 已生成 js/data.js：' + Buffer.byteLength(code, 'utf8') + ' 字节，'
-  + itemList.length + ' 种物品（+ ' + aliasCount + ' 别名） / ' + lines.length + ' 条旁白 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
+  + itemList.length + ' 种物品（+ ' + aliasCount + ' 别名） / ' + shop.length + ' 件商品 / '
+  + lines.length + ' 条旁白 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
 console.log('[build-data] 来源：' + GENERATED_FROM.join('、'));

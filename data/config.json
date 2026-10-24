@@ -16,6 +16,14 @@
     "rewardMode": "coins",
     "maxGrudge": 3
   },
+  "economy": {
+    "switchCost": 15,
+    "shopOpenStates": [
+      "DECIDE",
+      "SETTLE_ROUND"
+    ],
+    "spentStat": true
+  },
   "lies": {
     "base": 0.35,
     "cap": 0.95,

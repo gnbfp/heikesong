@@ -1,7 +1,7 @@
 /* ============================================================================
  * js/data.js —— 内容层生成产物（《三扇门：别信旁白》阶段 2）
  * 本文件由 tools/build-data.js 生成，勿手改。
- * 数据来源：data/items.json、data/config.json、data/narrator.json、data/seed_demo.json
+ * 数据来源：data/items.json、data/shop.json、data/config.json、data/narrator.json、data/seed_demo.json
  * 改数值请改 data/*.json，然后重新执行：node tools/build-data.js
  * 零构建：经典脚本挂 globalThis.GameData，file:// 双击可用，浏览器侧禁止 fetch JSON。
  * ========================================================================== */
@@ -14,6 +14,7 @@
     "version": "1.0.0",
     "generatedFrom": [
       "data/items.json",
+      "data/shop.json",
       "data/config.json",
       "data/narrator.json",
       "data/seed_demo.json"
@@ -177,6 +178,14 @@
       "grudgeLieBonus": 0.2,
       "rewardMode": "coins",
       "maxGrudge": 3
+    },
+    "economy": {
+      "switchCost": 15,
+      "shopOpenStates": [
+        "DECIDE",
+        "SETTLE_ROUND"
+      ],
+      "spentStat": true
     },
     "lies": {
       "base": 0.35,
@@ -560,6 +569,84 @@
 
   function itemById(id) { return (id && items[id]) || null; }
 
+  /* 商店商品表（docs/设计契约_商店与美术.md §2.2）：cap=null 表示不限购，
+     unlimited / immediate 为派生布尔，价格与单局上限由契约冻结。 */
+  var shop = [
+    {
+      "id": "switch_ticket",
+      "name": "换门券",
+      "price": 25,
+      "cap": 3,
+      "kind": "bag",
+      "icon": "ticket",
+      "desc": "换门时自动顶上，省下 15 金币。",
+      "unlimited": false,
+      "immediate": false
+    },
+    {
+      "id": "mute_card",
+      "name": "闭嘴卡",
+      "price": 20,
+      "cap": 2,
+      "kind": "bag",
+      "icon": "mute",
+      "desc": "下一轮让它闭嘴：防剧透，不防霉运。",
+      "unlimited": false,
+      "immediate": false
+    },
+    {
+      "id": "double_coins",
+      "name": "双倍金币",
+      "price": 40,
+      "cap": 2,
+      "kind": "bag",
+      "icon": "double",
+      "desc": "本轮开奖收益翻倍，罚金也翻倍。",
+      "unlimited": false,
+      "immediate": false
+    },
+    {
+      "id": "fuse",
+      "name": "保险丝",
+      "price": 35,
+      "cap": 2,
+      "kind": "bag",
+      "icon": "fuse",
+      "desc": "接上它，下一次负面结算直接归零。",
+      "unlimited": false,
+      "immediate": false
+    },
+    {
+      "id": "mystery_box",
+      "name": "神秘盒",
+      "price": 15,
+      "cap": null,
+      "kind": "instant",
+      "icon": "box",
+      "desc": "当场开：小奖或小坑，手气自己扛。",
+      "unlimited": true,
+      "immediate": true
+    },
+    {
+      "id": "patience_charm",
+      "name": "续命符",
+      "price": 60,
+      "cap": 2,
+      "kind": "instant",
+      "icon": "charm",
+      "desc": "立刻加 1 点耐心，最多到 5。",
+      "unlimited": false,
+      "immediate": true,
+      "patienceCap": 5
+    }
+  ];
+
+  /** 按 id 取商品定义，未知 id 返回 null（引擎 buy/useItem 与 ui 渲染共用）。 */
+  function shopById(id) {
+    for (var i = 0; i < shop.length; i++) if (shop[i].id === id) return shop[i];
+    return null;
+  }
+
   /**
    * 结算评级：高轮次收手（config.cashoutMaster）优先，其次按 config.ratings 金币档位。
    * 确定性纯函数，不改任何状态。
@@ -594,6 +681,8 @@
     itemById: itemById,
     poolForRound: poolForRound,
     ratingFor: ratingFor,
+    shop: shop,
+    shopById: shopById,
     config: config,
     narrator: narrator,
     seedDemo: seedDemo

@@ -1,0 +1,60 @@
+{
+  "source": "docs/设计契约_商店与美术.md · §2.2 商品表（价格/单局上限逐字对应）",
+  "shop": [
+    {
+      "id": "switch_ticket",
+      "name": "换门券",
+      "price": 25,
+      "cap": 3,
+      "kind": "bag",
+      "icon": "ticket",
+      "desc": "换门时自动顶上，省下 15 金币。"
+    },
+    {
+      "id": "mute_card",
+      "name": "闭嘴卡",
+      "price": 20,
+      "cap": 2,
+      "kind": "bag",
+      "icon": "mute",
+      "desc": "下一轮让它闭嘴：防剧透，不防霉运。"
+    },
+    {
+      "id": "double_coins",
+      "name": "双倍金币",
+      "price": 40,
+      "cap": 2,
+      "kind": "bag",
+      "icon": "double",
+      "desc": "本轮开奖收益翻倍，罚金也翻倍。"
+    },
+    {
+      "id": "fuse",
+      "name": "保险丝",
+      "price": 35,
+      "cap": 2,
+      "kind": "bag",
+      "icon": "fuse",
+      "desc": "接上它，下一次负面结算直接归零。"
+    },
+    {
+      "id": "mystery_box",
+      "name": "神秘盒",
+      "price": 15,
+      "cap": null,
+      "kind": "instant",
+      "icon": "box",
+      "desc": "当场开：小奖或小坑，手气自己扛。"
+    },
+    {
+      "id": "patience_charm",
+      "name": "续命符",
+      "price": 60,
+      "cap": 2,
+      "kind": "instant",
+      "icon": "charm",
+      "patienceCap": 5,
+      "desc": "立刻加 1 点耐心，最多到 5。"
+    }
+  ]
+}
