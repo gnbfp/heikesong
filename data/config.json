@@ -27,6 +27,13 @@
     ],
     "spentStat": true
   },
+  "personalities": {
+    "default": "sarcastic",
+    "lieRateDeltaCap": 0.1
+  },
+  "achievements": {
+    "storageKey": "three_doors_achievements_v1"
+  },
   "lies": {
     "base": 0.35,
     "cap": 0.95,

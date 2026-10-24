@@ -3,12 +3,17 @@
  * ----------------------------------------------------------------------------
  * 契约（《开工清单》阶段 2/4 + js/game.js 实际调用）：
  *   Narrator.pickRoundLines(state, script) -> [line, line]（长度恒为 2）
- *     line = { id, text, kind, truthful[, claimable, claimType, claim] }
+ *     line = { id, text, kind, truthful[, claimable, claimType, claim, persona] }
  *     · script 非空（演示剧本）时按 script.narrator = 'truth'|'lie'|'lie_hard' 出牌；
  *     · script 为 null（普通模式）时用 state.rng 走 lieRate(state) 决定真/假，
  *       同 seed + 同 cursor 必得同一结果（不额外消耗随机数来做文案挑选）；
- *     · claimable 行会附一条可判定线索 claim（契约 v3 §1.1），只走 state.rng。
- *   Narrator.lieRate(state) -> 0..1：base + grudge × grudgeLieBonus（封顶 cap）。
+ *     · claimable 行会附一条可判定线索 claim（契约 v3 §1.1），只走 state.rng；
+ *     · 契约 v4 §3.6：state.personality 合法时第 2 句换成人格开场 / 串场句，
+ *       第 1 句仍是判定句，逐句带出 line.persona（供 UI 展示）。
+ *   Narrator.lieRate(state) -> 0..1：base + grudge × grudgeLieBonus + 人格增量，
+ *     夹在 [base, cap]（契约 v4 §3.6）。
+ *   Narrator.settleLine(state, result) -> line | null：结算 / 收手点评，
+ *     result.kind ∈ 'win' | 'lose' | 'cashout' | 'bust'，有人格时优先人格结算子池。
  *   Narrator.resolveChallenge(state, line) -> { ok, rewardMode, coins, patience,
  *     suspicion, text, grudgeLevel, hint, claim }：只判定，绝不改 state。
  *   Narrator.endingLine(state, endingId) -> line | null（结算页赛后点评）。
@@ -64,6 +69,66 @@
     return out;
   }
 
+  /* ------------------------------------------------- 旁白人格（契约 v4 §3.1/§3.3/§3.6） */
+  /* 人格只认 state.personality：非法 / 未设置一律回退通用池（缺配置不报错）。 */
+  function personaOf(state) {
+    var id = state && state.personality;
+    if (typeof id !== 'string' || !id) return null;
+    var d = gameData() || {};
+    if (typeof d.personasById === 'function') return d.personasById(id) ? id : null;
+    var list = d.personas || [];
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return id;
+    return null;
+  }
+
+  function personaDef(state) {
+    var id = personaOf(state);
+    if (!id) return null;
+    var d = gameData() || {};
+    if (typeof d.personasById === 'function') return d.personasById(id) || null;
+    var list = d.personas || [];
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i];
+    return null;
+  }
+
+  /** 人格撒谎率增量：夹在 ±config.personalities.lieRateDeltaCap（缺配置按 0.1）。 */
+  function personaDeltaOf(state) {
+    var def = personaDef(state);
+    if (!def) return 0;
+    var cap = num((config().personalities || {}).lieRateDeltaCap, 0.1);
+    var d = num(def.lieRateDelta, 0);
+    if (cap > 0) {
+      if (d > cap) d = cap;
+      if (d < -cap) d = -cap;
+    }
+    return d;
+  }
+
+  /** 结算点评池里按 id 取一条（人格子池的 settle 引用的是这里的 id）。 */
+  function settleById(id) {
+    var list = doc().settle || [];
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i];
+    return null;
+  }
+
+  /**
+   * 人格子池（intro 开场 / flavor 串场 / settle 结算）：未配置或引用失效返回空数组，
+   * 调用方一律回退通用池。settle 取结算池，intro/flavor 取 lines。
+   */
+  function personaPool(state, key) {
+    var pid = personaOf(state);
+    if (!pid) return [];
+    var table = doc().personas || {};
+    var pool = table[pid];
+    if (!pool || !Array.isArray(pool[key])) return [];
+    var out = [];
+    for (var i = 0; i < pool[key].length; i++) {
+      var l = (key === 'settle') ? settleById(pool[key][i]) : lineById(pool[key][i]);
+      if (l) out.push(key === 'settle' ? l : cloneLine(l));
+    }
+    return out;
+  }
+
   /** 从 state.rng 取 [0,1)：可复现；无 RNG 时退化为与轮次绑定的确定值。 */
   function rngFloat(state) {
     var r = state && state.rng;
@@ -75,7 +140,7 @@
     return x - Math.floor(x);
   }
 
-  /** 撒谎率：基础值 + 累计怨恨 × 每次 +20%，封顶。 */
+  /** 撒谎率：基础值 + 累计怨恨 × 每次 +20% + 人格增量，夹在 [base, cap]。 */
   function lieRate(state) {
     var lies = config().lies || {};
     var sus = config().suspicion || {};
@@ -83,8 +148,9 @@
     var bonus = num(sus.grudgeLieBonus, 0.2);
     var grudge = num(state && state.grudge, 0);
     var cap = num(lies.cap, 0.95);
-    var rate = base + grudge * bonus;
-    if (rate < 0) rate = 0;
+    var rate = base + grudge * bonus + personaDeltaOf(state);
+    /* 契约 v4 §3.6：叠加人格增量后仍夹在 [base, cap]（温柔不会比基础更老实）。 */
+    if (rate < base) rate = base;
     if (cap > 0 && rate > cap) rate = cap;
     return rate;
   }
@@ -276,6 +342,23 @@
     for (var k = 0; out.length < 2 && pool.length && k < pool.length; k++) {
       out.push(attach(cloneLine(pool[k])));
     }
+
+    /* 契约 v4 §3.6：有人格时第 2 句改用该人格的串场句（第 1 轮取开场池，之后取串场池），
+       第 1 句仍是 mode 判定句 —— 引擎用 narratorLines[0] 判定真伪，人格不改变判定。 */
+    var pid = personaOf(state);
+    if (pid) {
+      var pkey = round <= 1 ? 'intro' : 'flavor';
+      var pLines = personaPool(state, pkey);
+      if (!pLines.length) pLines = personaPool(state, pkey === 'intro' ? 'flavor' : 'intro');
+      for (var pi = 0; pi < out.length; pi++) if (out[pi]) out[pi].persona = pid;
+      if (pLines.length && out.length >= 2) {
+        var pl = pickFrom(state, pLines);
+        if (pl) {
+          pl.persona = pid;
+          out[1] = pl;
+        }
+      }
+    }
     return out;
   }
 
@@ -392,10 +475,63 @@
     return l;
   }
 
+  var SETTLE_RESULTS = ['win', 'lose', 'cashout', 'bust'];
+
+  /** result 没给（或给了非法值）时，按 state 兜底推断结算类型。 */
+  function inferSettleKind(state, result) {
+    var s = state || {};
+    var rr = s.roundResult || {};
+    var r = (result && typeof result === 'object') ? result : {};
+    if (s.gameOver || num(s.patience, 1) <= 0 || r.bust || rr.bust) return 'bust';
+    if (r.cashout || rr.cashout || s.ending) return 'cashout';
+    var c = num(r.coins !== undefined ? r.coins : rr.coins, NaN);
+    if (isFinite(c)) return c > 0 ? 'win' : (c < 0 ? 'lose' : 'cashout');
+    return 'cashout';
+  }
+
+  /**
+   * 结算 / 收手点评：result.kind ∈ win | lose | cashout | bust（也接受直接传字符串）。
+   * 有人格时优先人格结算子池（且只取同 result 的行），挑句走 state.rng，同种子可复现。
+   * 纯读，不改 state。
+   */
+  function settleLine(state, result) {
+    var kind = '';
+    if (typeof result === 'string') kind = result;
+    else if (result && typeof result === 'object') kind = result.kind || result.result || '';
+    if (SETTLE_RESULTS.indexOf(kind) < 0) kind = inferSettleKind(state, result);
+
+    var list = doc().settle || [];
+    var pool = [];
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].result === kind) pool.push(list[i]);
+    if (!pool.length) pool = list;
+    if (!pool.length) return null;
+
+    var preferred = [];
+    var personaList = personaPool(state, 'settle');
+    for (var j = 0; j < personaList.length; j++) {
+      if (personaList[j] && personaList[j].result === kind) preferred.push(personaList[j]);
+    }
+    if (preferred.length) pool = preferred;
+
+    var l = cloneLine(pickFrom(state, pool));
+    if (!l) return null;
+    if (!l.kind) l.kind = 'settle';
+    l.result = kind;
+    return l;
+  }
+
   /** 彩蛋：按 trigger 取 line；state 上的连击数不满足需要时返回 null。 */
   function special(state, trigger) {
     if (!trigger) return null;
     var kind = (trigger === 'intro' || trigger === 'flavor') ? trigger : 'special';
+    /* 开场 / 串场句优先走人格子池（按轮次轮播，不额外消耗随机数）。 */
+    if (kind !== 'special') {
+      var pp = personaPool(state, kind);
+      if (pp.length) {
+        var prd = Math.max(1, Math.round(num(state && state.round, 1)));
+        return pp[(prd - 1) % pp.length];
+      }
+    }
     var list = [];
     var all = linesOfKind(kind);
     for (var i = 0; i < all.length; i++) {
@@ -428,6 +564,9 @@
     highlight: highlight,
     special: special,
     endingLine: endingLine,
+    settleLine: settleLine,
+    personaOf: personaOf,
+    personaDelta: personaDeltaOf,
     claimFor: claimFor,
     lineById: lineById
   };

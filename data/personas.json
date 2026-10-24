@@ -1,0 +1,26 @@
+{
+  "source": "设计契约 v4 §3.1 旁白人格（id/名称/图标/lieRateDelta 逐字对齐；desc ≤22 字）",
+  "personas": [
+    {
+      "id": "sarcastic",
+      "name": "毒舌旁白",
+      "icon": "😏",
+      "desc": "阴阳怪气，句句带刺。",
+      "lieRateDelta": 0
+    },
+    {
+      "id": "gentle",
+      "name": "温柔旁白",
+      "icon": "🌸",
+      "desc": "轻声细语，但也不一定说真话。",
+      "lieRateDelta": -0.05
+    },
+    {
+      "id": "crazy",
+      "name": "癫狂旁白",
+      "icon": "🤪",
+      "desc": "神经兮兮，语速都比别人快。",
+      "lieRateDelta": 0.05
+    }
+  ]
+}

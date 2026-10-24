@@ -1,7 +1,7 @@
 /* ============================================================================
  * js/data.js —— 内容层生成产物（《三扇门：别信旁白》阶段 2）
  * 本文件由 tools/build-data.js 生成，勿手改。
- * 数据来源：data/items.json、data/shop.json、data/config.json、data/narrator.json、data/seed_demo.json
+ * 数据来源：data/items.json、data/shop.json、data/personas.json、data/achievements.json、data/config.json、data/narrator.json、data/seed_demo.json
  * 改数值请改 data/*.json，然后重新执行：node tools/build-data.js
  * 零构建：经典脚本挂 globalThis.GameData，file:// 双击可用，浏览器侧禁止 fetch JSON。
  * ========================================================================== */
@@ -15,6 +15,8 @@
     "generatedFrom": [
       "data/items.json",
       "data/shop.json",
+      "data/personas.json",
+      "data/achievements.json",
       "data/config.json",
       "data/narrator.json",
       "data/seed_demo.json"
@@ -23,10 +25,13 @@
     "demoSeed": 20261024,
     "itemCount": 9,
     "itemAliasCount": 1,
-    "narratorCount": 60,
+    "narratorCount": 72,
     "claimableCount": 13,
     "endingLineCount": 16,
-    "endingCount": 8
+    "endingCount": 8,
+    "personaCount": 3,
+    "achievementCount": 10,
+    "settleCount": 16
   };
 
   var itemList = [
@@ -192,6 +197,13 @@
         "SETTLE_ROUND"
       ],
       "spentStat": true
+    },
+    "personalities": {
+      "default": "sarcastic",
+      "lieRateDeltaCap": 0.1
+    },
+    "achievements": {
+      "storageKey": "three_doors_achievements_v1"
     },
     "lies": {
       "base": 0.35,
@@ -832,6 +844,78 @@
         "kind": "special",
         "truthful": true,
         "trigger": "challenge"
+      },
+      {
+        "id": "pi_s1",
+        "text": "又是你？行，看你今晚能撑几轮。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "pi_s2",
+        "text": "坐好，别急着把钱送给我。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "pf_s1",
+        "text": "手别抖，抖了也白抖。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "pf_s2",
+        "text": "你猜？我最爱看你猜。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "pi_g1",
+        "text": "今晚请放松些，慢慢挑就好。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "pi_g2",
+        "text": "灯光很软，我陪你一轮一轮来。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "pf_g1",
+        "text": "别紧张，选你心里那扇就好。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "pf_g2",
+        "text": "深呼吸，门不会咬人的。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "pi_c1",
+        "text": "来了来了来了！三扇门！开！",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "pi_c2",
+        "text": "嘿嘿，今晚我要说点好听的。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "pf_c1",
+        "text": "嗨起来！金币在唱歌！",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "pf_c2",
+        "text": "快选快选，我快憋不住了！",
+        "kind": "flavor",
+        "truthful": true
       }
     ],
     "endings": {
@@ -931,8 +1015,303 @@
           "kind": "ending"
         }
       ]
+    },
+    "settle": [
+      {
+        "id": "st_w1",
+        "text": "这一轮，金币自己往你怀里跑。",
+        "kind": "settle",
+        "result": "win"
+      },
+      {
+        "id": "st_w2",
+        "text": "手气不错，我记你一笔。",
+        "kind": "settle",
+        "result": "win"
+      },
+      {
+        "id": "st_w3",
+        "text": "赢面这么大，我都有点酸。",
+        "kind": "settle",
+        "result": "win"
+      },
+      {
+        "id": "st_w4",
+        "text": "钱进了你的兜，台词归我。",
+        "kind": "settle",
+        "result": "win"
+      },
+      {
+        "id": "st_l1",
+        "text": "亏了吧？我早说过别冲动。",
+        "kind": "settle",
+        "result": "lose"
+      },
+      {
+        "id": "st_l2",
+        "text": "金币少了，教训多了一点。",
+        "kind": "settle",
+        "result": "lose"
+      },
+      {
+        "id": "st_l3",
+        "text": "这一把，你替观众交了学费。",
+        "kind": "settle",
+        "result": "lose"
+      },
+      {
+        "id": "st_l4",
+        "text": "别灰心，输的人才有故事。",
+        "kind": "settle",
+        "result": "lose"
+      },
+      {
+        "id": "st_c1",
+        "text": "拿钱走人？这步棋走得狠。",
+        "kind": "settle",
+        "result": "cashout"
+      },
+      {
+        "id": "st_c2",
+        "text": "见好就收，我不拦你。",
+        "kind": "settle",
+        "result": "cashout"
+      },
+      {
+        "id": "st_c3",
+        "text": "你走了，台上就剩我自言自语。",
+        "kind": "settle",
+        "result": "cashout"
+      },
+      {
+        "id": "st_c4",
+        "text": "收手也算赢，记住这句。",
+        "kind": "settle",
+        "result": "cashout"
+      },
+      {
+        "id": "st_b1",
+        "text": "耐心见底，今晚到此为止。",
+        "kind": "settle",
+        "result": "bust"
+      },
+      {
+        "id": "st_b2",
+        "text": "你被我劝退了，别不服气。",
+        "kind": "settle",
+        "result": "bust"
+      },
+      {
+        "id": "st_b3",
+        "text": "人走了，金币留在了桌上。",
+        "kind": "settle",
+        "result": "bust"
+      },
+      {
+        "id": "st_b4",
+        "text": "下次记得：旁白的话别全信。",
+        "kind": "settle",
+        "result": "bust"
+      }
+    ],
+    "personas": {
+      "sarcastic": {
+        "intro": [
+          "pi_s1",
+          "pi_s2",
+          "in03"
+        ],
+        "flavor": [
+          "pf_s1",
+          "pf_s2",
+          "fl01"
+        ],
+        "settle": [
+          "st_w2",
+          "st_l1",
+          "st_c2",
+          "st_b2"
+        ]
+      },
+      "gentle": {
+        "intro": [
+          "pi_g1",
+          "pi_g2",
+          "in01"
+        ],
+        "flavor": [
+          "pf_g1",
+          "pf_g2",
+          "fl05"
+        ],
+        "settle": [
+          "st_w4",
+          "st_l4",
+          "st_c4",
+          "st_b4"
+        ]
+      },
+      "crazy": {
+        "intro": [
+          "pi_c1",
+          "pi_c2",
+          "in02"
+        ],
+        "flavor": [
+          "pf_c1",
+          "pf_c2",
+          "fl02"
+        ],
+        "settle": [
+          "st_w3",
+          "st_l3",
+          "st_c3",
+          "st_b3"
+        ]
+      }
     }
   };
+
+  /* 旁白人格（契约 v4 §3.1）：lieRateDelta 叠加在撒谎率上，最终仍夹在 [base, cap]。 */
+  var personas = [
+    {
+      "id": "sarcastic",
+      "name": "毒舌旁白",
+      "icon": "😏",
+      "desc": "阴阳怪气，句句带刺。",
+      "lieRateDelta": 0
+    },
+    {
+      "id": "gentle",
+      "name": "温柔旁白",
+      "icon": "🌸",
+      "desc": "轻声细语，但也不一定说真话。",
+      "lieRateDelta": -0.05
+    },
+    {
+      "id": "crazy",
+      "name": "癫狂旁白",
+      "icon": "🤪",
+      "desc": "神经兮兮，语速都比别人快。",
+      "lieRateDelta": 0.05
+    }
+  ];
+
+  /** 按 id 取人格定义，未知 id 返回 null（引擎 / ui 渲染共用）。 */
+  function personasById(id) {
+    for (var i = 0; i < personas.length; i++) if (personas[i].id === id) return personas[i];
+    return null;
+  }
+
+  /* 成就表（契约 v4 §3.2）：恰 10 条，check.type 白名单与阈值由构建期校验。 */
+  var achievements = [
+    {
+      "id": "first_cashout",
+      "name": "见好就收",
+      "icon": "💰",
+      "desc": "第一次主动收手，把钱装进口袋就走。",
+      "check": {
+        "type": "cashouts",
+        "threshold": 1
+      }
+    },
+    {
+      "id": "rounds5",
+      "name": "五关斩将",
+      "icon": "🖐️",
+      "desc": "一局活到第 5 轮还没倒下。",
+      "check": {
+        "type": "rounds",
+        "threshold": 5
+      }
+    },
+    {
+      "id": "coins300",
+      "name": "三百门客",
+      "icon": "🪙",
+      "desc": "单局金币达到三百，旁白开始紧张。",
+      "check": {
+        "type": "coins",
+        "threshold": 300
+      }
+    },
+    {
+      "id": "combo3",
+      "name": "三连问",
+      "icon": "🔍",
+      "desc": "单局连续三次质疑成功，眼睛很毒。",
+      "check": {
+        "type": "challengeWins",
+        "threshold": 3
+      }
+    },
+    {
+      "id": "codex24",
+      "name": "全知者",
+      "icon": "📚",
+      "desc": "图鉴里收录了二十四条旁白台词。",
+      "check": {
+        "type": "codexLines",
+        "threshold": 24
+      }
+    },
+    {
+      "id": "endings4",
+      "name": "剧作人",
+      "icon": "🎬",
+      "desc": "解锁四个结局，剧本被你翻烂了。",
+      "check": {
+        "type": "endings",
+        "threshold": 4
+      }
+    },
+    {
+      "id": "all_in",
+      "name": "梭哈",
+      "icon": "🎲",
+      "desc": "单局用掉三次加倍，胆子不小。",
+      "check": {
+        "type": "doubles",
+        "threshold": 3
+      }
+    },
+    {
+      "id": "comeback",
+      "name": "绝地反击",
+      "icon": "🔥",
+      "desc": "金币掉到三十以下还能翻回两百。",
+      "check": {
+        "type": "comeback",
+        "threshold": 200
+      }
+    },
+    {
+      "id": "clean_run",
+      "name": "火眼金睛",
+      "icon": "👁️",
+      "desc": "一局里质疑零失误，然后收手走人。",
+      "check": {
+        "type": "clean",
+        "threshold": 1
+      }
+    },
+    {
+      "id": "persona3",
+      "name": "千人千面",
+      "icon": "🎭",
+      "desc": "三种旁白人格都体验过一遍。",
+      "check": {
+        "type": "personas",
+        "threshold": 3
+      }
+    }
+  ];
+
+  /** 按 id 取成就定义，未知 id 返回 null（引擎判定 / ui 成就墙共用）。 */
+  function achievementsById(id) {
+    for (var i = 0; i < achievements.length; i++) if (achievements[i].id === id) return achievements[i];
+    return null;
+  }
 
   var seedDemo = {
     "seed": 20261024,
@@ -1113,6 +1492,10 @@
     ratingFor: ratingFor,
     shop: shop,
     shopById: shopById,
+    personas: personas,
+    personasById: personasById,
+    achievements: achievements,
+    achievementsById: achievementsById,
     config: config,
     narrator: narrator,
     seedDemo: seedDemo

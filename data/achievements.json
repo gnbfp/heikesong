@@ -1,0 +1,75 @@
+{
+  "source": "设计契约 v4 §3.2 成就表（恰 10 条；id 与 check.type 白名单冻结，阈值 > 0，文案 ≤40 字）",
+  "achievements": [
+    {
+      "id": "first_cashout",
+      "name": "见好就收",
+      "icon": "💰",
+      "desc": "第一次主动收手，把钱装进口袋就走。",
+      "check": { "type": "cashouts", "threshold": 1 }
+    },
+    {
+      "id": "rounds5",
+      "name": "五关斩将",
+      "icon": "🖐️",
+      "desc": "一局活到第 5 轮还没倒下。",
+      "check": { "type": "rounds", "threshold": 5 }
+    },
+    {
+      "id": "coins300",
+      "name": "三百门客",
+      "icon": "🪙",
+      "desc": "单局金币达到三百，旁白开始紧张。",
+      "check": { "type": "coins", "threshold": 300 }
+    },
+    {
+      "id": "combo3",
+      "name": "三连问",
+      "icon": "🔍",
+      "desc": "单局连续三次质疑成功，眼睛很毒。",
+      "check": { "type": "challengeWins", "threshold": 3 }
+    },
+    {
+      "id": "codex24",
+      "name": "全知者",
+      "icon": "📚",
+      "desc": "图鉴里收录了二十四条旁白台词。",
+      "check": { "type": "codexLines", "threshold": 24 }
+    },
+    {
+      "id": "endings4",
+      "name": "剧作人",
+      "icon": "🎬",
+      "desc": "解锁四个结局，剧本被你翻烂了。",
+      "check": { "type": "endings", "threshold": 4 }
+    },
+    {
+      "id": "all_in",
+      "name": "梭哈",
+      "icon": "🎲",
+      "desc": "单局用掉三次加倍，胆子不小。",
+      "check": { "type": "doubles", "threshold": 3 }
+    },
+    {
+      "id": "comeback",
+      "name": "绝地反击",
+      "icon": "🔥",
+      "desc": "金币掉到三十以下还能翻回两百。",
+      "check": { "type": "comeback", "threshold": 200 }
+    },
+    {
+      "id": "clean_run",
+      "name": "火眼金睛",
+      "icon": "👁️",
+      "desc": "一局里质疑零失误，然后收手走人。",
+      "check": { "type": "clean", "threshold": 1 }
+    },
+    {
+      "id": "persona3",
+      "name": "千人千面",
+      "icon": "🎭",
+      "desc": "三种旁白人格都体验过一遍。",
+      "check": { "type": "personas", "threshold": 3 }
+    }
+  ]
+}

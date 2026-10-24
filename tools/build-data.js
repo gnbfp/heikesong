@@ -25,6 +25,8 @@ var OUT_FILE = path.join(ROOT, 'js', 'data.js');
 var GENERATED_FROM = [
   'data/items.json',
   'data/shop.json',
+  'data/personas.json',
+  'data/achievements.json',
   'data/config.json',
   'data/narrator.json',
   'data/seed_demo.json'
@@ -133,6 +135,54 @@ var CLAIM_TEXT_RULES = {
 };
 var NARRATOR_TOTAL_MIN = 60;
 
+/* 契约 v4 §3.1 旁白人格 —— id/name/icon/desc/lieRateDelta 逐字硬编码为构建期防线。 */
+var EXPECT_PERSONAS = [
+  { id: 'sarcastic', name: '毒舌旁白', icon: '😏', desc: '阴阳怪气，句句带刺。', lieRateDelta: 0 },
+  { id: 'gentle', name: '温柔旁白', icon: '🌸', desc: '轻声细语，但也不一定说真话。', lieRateDelta: -0.05 },
+  { id: 'crazy', name: '癫狂旁白', icon: '🤪', desc: '神经兮兮，语速都比别人快。', lieRateDelta: 0.05 }
+];
+var PERSONA_DESC_MAX = 22;
+var PERSONA_IDS = ['sarcastic', 'gentle', 'crazy'];
+/* 人格子池：开场 / 串场 / 结算，键名由契约 §3.3 冻结。 */
+var PERSONA_POOL_KEYS = ['intro', 'flavor', 'settle'];
+var PERSONA_POOL_MIN = 1;
+var EXPECT_PERSONALITY_DEFAULT = 'sarcastic';
+var EXPECT_LIE_RATE_DELTA_CAP = 0.1;
+var EXPECT_ACHIEVEMENTS_STORAGE_KEY = 'three_doors_achievements_v1';
+
+/* 契约 v4 §3.2 成就表 —— 恰 10 条，id/name/icon/check.type/threshold 冻结（desc 文案自拟 ≤40 字）。 */
+var EXPECT_ACHIEVEMENTS = [
+  { id: 'first_cashout', name: '见好就收', icon: '💰', type: 'cashouts', threshold: 1 },
+  { id: 'rounds5', name: '五关斩将', icon: '🖐️', type: 'rounds', threshold: 5 },
+  { id: 'coins300', name: '三百门客', icon: '🪙', type: 'coins', threshold: 300 },
+  { id: 'combo3', name: '三连问', icon: '🔍', type: 'challengeWins', threshold: 3 },
+  { id: 'codex24', name: '全知者', icon: '📚', type: 'codexLines', threshold: 24 },
+  { id: 'endings4', name: '剧作人', icon: '🎬', type: 'endings', threshold: 4 },
+  { id: 'all_in', name: '梭哈', icon: '🎲', type: 'doubles', threshold: 3 },
+  { id: 'comeback', name: '绝地反击', icon: '🔥', type: 'comeback', threshold: 200 },
+  { id: 'clean_run', name: '火眼金睛', icon: '👁️', type: 'clean', threshold: 1 },
+  { id: 'persona3', name: '千人千面', icon: '🎭', type: 'personas', threshold: 3 }
+];
+var ACHIEVEMENT_TYPES = ['rounds', 'coins', 'cashouts', 'challengeWins', 'codexLines', 'endings', 'doubles', 'comeback', 'personas', 'clean'];
+var ACHIEVEMENT_DESC_MAX = 40;
+
+/* 契约 v4 §3.3 结算点评池：≥12 条、按 result 挑选（win/lose/cashout/bust 每种 ≥2 条）。 */
+var SETTLE_MIN = 12;
+var SETTLE_RESULTS = ['win', 'lose', 'cashout', 'bust'];
+var SETTLE_RESULT_MIN = 2;
+
+/* 「只增不改」防线：契约 v3 冻结的 60 条台词 id（连顺序），v4 只允许在其后追加。 */
+var LEGACY_LINE_IDS = [
+  't01', 't02', 't03', 't04', 't05', 't06', 't07', 't08', 't09',
+  'l01', 'l02', 'l03', 'l04', 'l05', 'l06', 'l07', 'l08', 'l09',
+  'h01', 'h02', 'h03', 'h04', 'h05', 'h06', 'h07', 'h08', 'h09',
+  'cw01', 'cw02', 'cw03', 'cw04', 'cw05', 'cw06',
+  'cf01', 'cf02', 'cf03', 'cf04', 'cf05', 'cf06',
+  'in01', 'in02', 'in03', 'in04',
+  'fl01', 'fl02', 'fl03', 'fl04', 'fl05', 'fl06', 'fl07', 'fl08',
+  's01', 's02', 's03', 's04', 's05', 's06', 's07', 's08', 's09'
+];
+
 function fail(msg) {
   console.error('[build-data] 校验失败：' + msg);
   process.exit(1);
@@ -165,6 +215,8 @@ var config = readJson('config.json');
 var narratorDoc = readJson('narrator.json');
 var seedDemo = readJson('seed_demo.json');
 var shopDoc = readJson('shop.json');
+var personasDoc = readJson('personas.json');
+var achievementsDoc = readJson('achievements.json');
 
 if (!itemsDoc || !Array.isArray(itemsDoc.items)) fail('items.json 顶层需要 { source, items: [...] }');
 var itemList = itemsDoc.items;
@@ -207,6 +259,54 @@ SUSPICION_DESC_IDS.forEach(function (id) {
   var it = itemsById(id);
   if (String(it.desc).indexOf('怀疑值') < 0) fail(it.id + '.desc 要说清「怀疑值 +1」（契约 §2.2）');
   if (String(it.desc).length > ITEM_DESC_MAX) fail(it.id + '.desc 超过 ' + ITEM_DESC_MAX + ' 字：' + String(it.desc).length + ' 字');
+});
+
+/* --------------------------------------- 校验 1b：旁白人格（契约 v4 §3.1，恰 3 条） */
+if (!personasDoc || !Array.isArray(personasDoc.personas)) fail('personas.json 顶层需要 { source, personas: [...] }');
+var personaList = personasDoc.personas;
+if (personaList.length !== EXPECT_PERSONAS.length) {
+  fail('人格数量应正好 ' + EXPECT_PERSONAS.length + ' 条，实际 ' + personaList.length);
+}
+personaList.forEach(function (p, i) {
+  var exp = EXPECT_PERSONAS[i];
+  if (!p || typeof p !== 'object') fail('人格 #' + (i + 1) + ' 不是对象');
+  if (p.id !== exp.id) fail('人格顺序/ id 不符：第 ' + (i + 1) + ' 项应为 ' + exp.id + '，实际 ' + p.id);
+  if (p.name !== exp.name) fail(p.id + '.name 应为 ' + exp.name + '，实际 ' + p.name);
+  if (p.icon !== exp.icon) fail(p.id + '.icon 应为 ' + exp.icon + '，实际 ' + p.icon);
+  if (!p.desc) fail(p.id + ' 缺 desc（≤' + PERSONA_DESC_MAX + ' 字）');
+  if (String(p.desc).length > PERSONA_DESC_MAX) fail(p.id + '.desc 超过 ' + PERSONA_DESC_MAX + ' 字：' + String(p.desc).length + ' 字');
+  if (Number(p.lieRateDelta) !== exp.lieRateDelta) fail(p.id + '.lieRateDelta 应为 ' + exp.lieRateDelta + '，实际 ' + p.lieRateDelta);
+  if (Math.abs(Number(p.lieRateDelta)) > EXPECT_LIE_RATE_DELTA_CAP) {
+    fail(p.id + '.lieRateDelta 超过 config.personalities.lieRateDeltaCap=' + EXPECT_LIE_RATE_DELTA_CAP);
+  }
+});
+
+/* ------------------------------------- 校验 1c：成就表（契约 v4 §3.2，恰 10 条） */
+if (!achievementsDoc || !Array.isArray(achievementsDoc.achievements)) {
+  fail('achievements.json 顶层需要 { source, achievements: [...] }');
+}
+var achievementList = achievementsDoc.achievements;
+if (achievementList.length !== EXPECT_ACHIEVEMENTS.length) {
+  fail('成就数量应正好 ' + EXPECT_ACHIEVEMENTS.length + ' 条，实际 ' + achievementList.length);
+}
+var seenAch = {};
+achievementList.forEach(function (a, i) {
+  var exp = EXPECT_ACHIEVEMENTS[i];
+  if (!a || typeof a !== 'object') fail('成就 #' + (i + 1) + ' 不是对象');
+  if (a.id !== exp.id) fail('成就顺序/ id 不符：第 ' + (i + 1) + ' 项应为 ' + exp.id + '，实际 ' + a.id);
+  if (seenAch[a.id]) fail('成就 id 重复：' + a.id);
+  seenAch[a.id] = true;
+  if (a.name !== exp.name) fail(a.id + '.name 应为 ' + exp.name + '，实际 ' + a.name);
+  if (a.icon !== exp.icon) fail(a.id + '.icon 应为 ' + exp.icon + '，实际 ' + a.icon);
+  if (!a.desc) fail(a.id + ' 缺 desc（≤' + ACHIEVEMENT_DESC_MAX + ' 字）');
+  if (String(a.desc).length > ACHIEVEMENT_DESC_MAX) {
+    fail(a.id + '.desc 超过 ' + ACHIEVEMENT_DESC_MAX + ' 字：' + String(a.desc).length + ' 字');
+  }
+  var chk = a.check;
+  if (!chk || typeof chk !== 'object') fail(a.id + ' 缺 check { type, threshold }');
+  if (ACHIEVEMENT_TYPES.indexOf(chk.type) < 0) fail(a.id + '.check.type 不在白名单：' + chk.type);
+  if (!(Number(chk.threshold) > 0)) fail(a.id + '.check.threshold 必须 > 0，实际 ' + chk.threshold);
+  if (Math.round(Number(chk.threshold)) !== Number(chk.threshold)) fail(a.id + '.check.threshold 必须是整数');
 });
 
 /* --------------------------------------------------- 校验 2：config 关键字段存在 */
@@ -255,6 +355,19 @@ var roundHints = need('roundHints', config.roundHints);
 var maxChars = Number((config.lies || {}).maxChars || 28);
 var linesPerRound = Number((config.lies || {}).linesPerRound || 2);
 if (linesPerRound !== 2) fail('lies.linesPerRound 应为 2（引擎每轮播 2 句）');
+
+/* 契约 v4 §3.4：人格默认值、撒谎率增量上限、成就存档键。 */
+var persCfg = need('personalities', config.personalities);
+if (PERSONA_IDS.indexOf(persCfg.default) < 0) {
+  fail('config.personalities.default 必须是 ' + PERSONA_IDS.join(' | ') + '，实际 ' + persCfg.default);
+}
+if (Number(persCfg.lieRateDeltaCap) !== EXPECT_LIE_RATE_DELTA_CAP) {
+  fail('config.personalities.lieRateDeltaCap 应为 ' + EXPECT_LIE_RATE_DELTA_CAP + '，实际 ' + persCfg.lieRateDeltaCap);
+}
+var achCfg = need('achievements', config.achievements);
+if (achCfg.storageKey !== EXPECT_ACHIEVEMENTS_STORAGE_KEY) {
+  fail('config.achievements.storageKey 应为 ' + EXPECT_ACHIEVEMENTS_STORAGE_KEY + '，实际 ' + achCfg.storageKey);
+}
 
 /* ------------------------- 校验 2a：结局表 config.endings（契约 v3 §4.1） */
 var endingsCfg = need('endings', config.endings);
@@ -373,6 +486,13 @@ Object.keys(KIND_MIN).forEach(function (k) {
 if (lines.length < NARRATOR_TOTAL_MIN) {
   fail('旁白 lines 至少 ' + NARRATOR_TOTAL_MIN + ' 条（F3 语料扩容），实际 ' + lines.length);
 }
+/* 契约 v4 §3.3「只增不改」：60 条既有台词必须原样保留且顺序不变（新增只能追加到末尾）。 */
+LEGACY_LINE_IDS.forEach(function (id, i) {
+  if (!lines[i] || lines[i].id !== id) {
+    fail('既有 60 条旁白被改动 / 删除 / 重排：第 ' + (i + 1) + ' 条应为 ' + id +
+      '，实际 ' + (lines[i] ? lines[i].id : '（不存在）'));
+  }
+});
 var triggers = lines.filter(function (l) { return l.kind === 'special'; }).map(function (l) { return l.trigger; });
 SPECIAL_TRIGGERS.forEach(function (t) {
   if (triggers.indexOf(t) < 0) fail('缺少彩蛋旁白 trigger=' + t);
@@ -435,6 +555,58 @@ Object.keys(endingLines).forEach(function (k) {
   if (!known) fail('narrator.endings 出现未知 lineKind：' + k);
 });
 
+/* --------- 校验 3d：结算点评池 narrator.settle（契约 v4 §3.3，≥12 条、按 result 分桶） */
+var settle = narratorDoc.settle;
+if (!Array.isArray(settle) || settle.length < SETTLE_MIN) {
+  fail('narrator.settle 至少 ' + SETTLE_MIN + ' 条结算点评，实际 ' + (Array.isArray(settle) ? settle.length : '（缺失）'));
+}
+var settleIds = {};
+var settleByResult = {};
+settle.forEach(function (l, i) {
+  if (!l || typeof l !== 'object') fail('narrator.settle#' + i + ' 不是对象');
+  if (!l.id || !l.text) fail('narrator.settle#' + i + ' 缺 id/text');
+  if (settleIds[l.id]) fail('结算点评 id 重复：' + l.id);
+  settleIds[l.id] = true;
+  if (l.kind !== 'settle') fail('结算点评 ' + l.id + ' 的 kind 应为 settle，实际 ' + l.kind);
+  if (String(l.text).length > maxChars) fail('结算点评 ' + l.id + ' 超过 ' + maxChars + ' 字：' + String(l.text).length + ' 字');
+  if (SETTLE_RESULTS.indexOf(l.result) < 0) fail('结算点评 ' + l.id + ' 的 result 非法：' + l.result);
+  settleByResult[l.result] = (settleByResult[l.result] || 0) + 1;
+});
+SETTLE_RESULTS.forEach(function (r) {
+  if ((settleByResult[r] || 0) < SETTLE_RESULT_MIN) {
+    fail('结算点评 result『' + r + '』至少 ' + SETTLE_RESULT_MIN + ' 条，实际 ' + (settleByResult[r] || 0));
+  }
+});
+
+/* --------- 校验 3e：人格子池 narrator.personas（契约 v4 §3.3 / §3.6） */
+var personaPools = narratorDoc.personas;
+if (!personaPools || typeof personaPools !== 'object' || Array.isArray(personaPools)) {
+  fail('narrator.json 需要 { personas: { [personaId]: { intro: [], flavor: [], settle: [] } } }');
+}
+var poolKeys = Object.keys(personaPools);
+if (poolKeys.length !== PERSONA_IDS.length) {
+  fail('narrator.personas 应覆盖 ' + PERSONA_IDS.length + ' 种人格，实际 ' + poolKeys.length + '：' + poolKeys.join('/'));
+}
+PERSONA_IDS.forEach(function (pid) {
+  var pool = personaPools[pid];
+  if (!pool || typeof pool !== 'object') fail('narrator.personas 缺人格 ' + pid);
+  PERSONA_POOL_KEYS.forEach(function (key) {
+    var list = pool[key];
+    if (!Array.isArray(list) || list.length < PERSONA_POOL_MIN) {
+      fail('narrator.personas.' + pid + '.' + key + ' 至少 ' + PERSONA_POOL_MIN + ' 条');
+    }
+    list.forEach(function (id) {
+      if (key === 'settle') {
+        if (!settleIds[id]) fail('narrator.personas.' + pid + '.settle 引用了不存在的结算点评 id：' + id);
+        return;
+      }
+      var def = byId[id];
+      if (!def) fail('narrator.personas.' + pid + '.' + key + ' 引用了不存在的旁白 id：' + id);
+      if (def.kind !== key) fail('narrator.personas.' + pid + '.' + key + ' 的 ' + id + ' kind 应为 ' + key + '，实际 ' + def.kind);
+    });
+  });
+});
+
 /* 每轮 2 句：配对表必须指向真实存在的 id，且第二句的 kind 与模式一致。 */
 var pairs = (narratorDoc && narratorDoc.pairs) || null;
 if (!pairs) fail('narrator.json 缺 pairs（每轮 2 句的配对表）');
@@ -492,7 +664,10 @@ out.push('  var meta = ' + stableStringify({
   narratorCount: lines.length,
   claimableCount: claimableCount,
   endingLineCount: endingLineTotal,
-  endingCount: EXPECT_ENDINGS.length
+  endingCount: EXPECT_ENDINGS.length,
+  personaCount: personaList.length,
+  achievementCount: achievementList.length,
+  settleCount: settle.length
 }).split('\n').join('\n  ') + ';');
 out.push('');
 out.push('  var itemList = ' + stableStringify(itemList).split('\n').join('\n  ') + ';');
@@ -509,6 +684,24 @@ out.push('');
 out.push('  var config = ' + stableStringify(config).split('\n').join('\n  ') + ';');
 out.push('');
 out.push('  var narrator = ' + stableStringify(narratorDoc).split('\n').join('\n  ') + ';');
+out.push('');
+out.push('  /* 旁白人格（契约 v4 §3.1）：lieRateDelta 叠加在撒谎率上，最终仍夹在 [base, cap]。 */');
+out.push('  var personas = ' + stableStringify(personaList).split('\n').join('\n  ') + ';');
+out.push('');
+out.push('  /** 按 id 取人格定义，未知 id 返回 null（引擎 / ui 渲染共用）。 */');
+out.push('  function personasById(id) {');
+out.push('    for (var i = 0; i < personas.length; i++) if (personas[i].id === id) return personas[i];');
+out.push('    return null;');
+out.push('  }');
+out.push('');
+out.push('  /* 成就表（契约 v4 §3.2）：恰 10 条，check.type 白名单与阈值由构建期校验。 */');
+out.push('  var achievements = ' + stableStringify(achievementList).split('\n').join('\n  ') + ';');
+out.push('');
+out.push('  /** 按 id 取成就定义，未知 id 返回 null（引擎判定 / ui 成就墙共用）。 */');
+out.push('  function achievementsById(id) {');
+out.push('    for (var i = 0; i < achievements.length; i++) if (achievements[i].id === id) return achievements[i];');
+out.push('    return null;');
+out.push('  }');
 out.push('');
 out.push('  var seedDemo = ' + stableStringify(seedDemo).split('\n').join('\n  ') + ';');
 out.push('');
@@ -584,6 +777,10 @@ out.push('    poolForRound: poolForRound,');
 out.push('    ratingFor: ratingFor,');
 out.push('    shop: shop,');
 out.push('    shopById: shopById,');
+out.push('    personas: personas,');
+out.push('    personasById: personasById,');
+out.push('    achievements: achievements,');
+out.push('    achievementsById: achievementsById,');
 out.push('    config: config,');
 out.push('    narrator: narrator,');
 out.push('    seedDemo: seedDemo');
@@ -708,6 +905,68 @@ CLAIM_TYPES.forEach(function (t) {
   if (n < CLAIM_TYPE_MIN) fail('产物里 claimType『' + t + '』应 ≥ ' + CLAIM_TYPE_MIN + ' 条，实际 ' + n);
 });
 
+/* 契约 v4 §3：人格 / 成就 / 结算点评 / 人格子池都必须真进了产物。 */
+if (!Array.isArray(GameData.personas) || GameData.personas.length !== EXPECT_PERSONAS.length) {
+  fail('GameData.personas 应为 ' + EXPECT_PERSONAS.length + ' 条');
+}
+EXPECT_PERSONAS.forEach(function (exp) {
+  var p = GameData.personasById(exp.id);
+  if (!p) fail('personasById(' + exp.id + ') 取不到人格');
+  if (p.name !== exp.name || Number(p.lieRateDelta) !== exp.lieRateDelta) fail('产物里 ' + exp.id + ' 的名称 / 撒谎率增量不对');
+  if (!p.icon || !p.desc) fail('产物里 ' + exp.id + ' 缺 icon/desc');
+});
+if (GameData.personasById('nope') !== null) fail('personasById 未知 id 应返回 null');
+if (GameData.config.personalities.default !== EXPECT_PERSONALITY_DEFAULT) {
+  fail('config.personalities.default 应为 ' + EXPECT_PERSONALITY_DEFAULT);
+}
+if (Number(GameData.config.personalities.lieRateDeltaCap) !== EXPECT_LIE_RATE_DELTA_CAP) {
+  fail('config.personalities.lieRateDeltaCap 应为 ' + EXPECT_LIE_RATE_DELTA_CAP);
+}
+if (GameData.config.achievements.storageKey !== EXPECT_ACHIEVEMENTS_STORAGE_KEY) {
+  fail('config.achievements.storageKey 应为 ' + EXPECT_ACHIEVEMENTS_STORAGE_KEY);
+}
+if (!Array.isArray(GameData.achievements) || GameData.achievements.length !== EXPECT_ACHIEVEMENTS.length) {
+  fail('GameData.achievements 应为 ' + EXPECT_ACHIEVEMENTS.length + ' 条');
+}
+EXPECT_ACHIEVEMENTS.forEach(function (exp) {
+  var a = GameData.achievementsById(exp.id);
+  if (!a) fail('achievementsById(' + exp.id + ') 取不到成就');
+  if (!a.check || a.check.type !== exp.type || Number(a.check.threshold) !== exp.threshold) {
+    fail('产物里 ' + exp.id + ' 的 check 应为 ' + exp.type + '/' + exp.threshold);
+  }
+  if (!a.name || !a.icon || !a.desc) fail('产物里 ' + exp.id + ' 缺 name/icon/desc');
+});
+if (GameData.achievementsById('nope') !== null) fail('achievementsById 未知 id 应返回 null');
+ACHIEVEMENT_TYPES.forEach(function (t) {
+  var n = GameData.achievements.filter(function (a) { return a.check.type === t; }).length;
+  if (n !== 1) fail('成就 check.type『' + t + '』应恰好 1 条，实际 ' + n);
+});
+var settleOut = GameData.narrator.settle;
+if (!Array.isArray(settleOut) || settleOut.length < SETTLE_MIN) {
+  fail('产物里 narrator.settle 应 ≥ ' + SETTLE_MIN + ' 条');
+}
+settleOut.forEach(function (l) {
+  if (l.kind !== 'settle' || !l.text || l.text.length > maxChars) fail('产物里结算点评 ' + l.id + ' 不合法');
+  if (SETTLE_RESULTS.indexOf(l.result) < 0) fail('产物里结算点评 ' + l.id + ' 的 result 非法：' + l.result);
+});
+SETTLE_RESULTS.forEach(function (r) {
+  var n = settleOut.filter(function (l) { return l.result === r; }).length;
+  if (n < SETTLE_RESULT_MIN) fail('产物里结算点评 result『' + r + '』应 ≥ ' + SETTLE_RESULT_MIN + ' 条，实际 ' + n);
+});
+PERSONA_IDS.forEach(function (pid) {
+  var pool = (GameData.narrator.personas || {})[pid];
+  if (!pool) fail('产物里 narrator.personas 缺人格 ' + pid);
+  PERSONA_POOL_KEYS.forEach(function (key) {
+    if (!Array.isArray(pool[key]) || !pool[key].length) fail('产物里 narrator.personas.' + pid + '.' + key + ' 为空');
+  });
+});
+/* 只增不改：产物里前 60 条仍是契约 v3 冻结的台词。 */
+LEGACY_LINE_IDS.forEach(function (id, i) {
+  if (!GameData.narrator.lines[i] || GameData.narrator.lines[i].id !== id) {
+    fail('产物里第 ' + (i + 1) + ' 条旁白应为 ' + id);
+  }
+});
+
 /* ------------------------------------------------------------------- 写文件 */
 if (process.argv.indexOf('--check') >= 0) {
   var current = '';
@@ -728,5 +987,6 @@ fs.writeFileSync(OUT_FILE, code, 'utf8');
 console.log('[build-data] 已生成 js/data.js：' + Buffer.byteLength(code, 'utf8') + ' 字节，'
   + itemList.length + ' 种物品（+ ' + aliasCount + ' 别名） / ' + shop.length + ' 件商品 / '
   + lines.length + ' 条旁白（' + claimableCount + ' 条带线索） + ' + endingLineTotal + ' 条结局点评 / '
-  + EXPECT_ENDINGS.length + ' 种结局 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
+  + EXPECT_ENDINGS.length + ' 种结局 / ' + personaList.length + ' 种人格 / ' + settle.length + ' 条结算点评 / '
+  + achievementList.length + ' 个成就 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
 console.log('[build-data] 来源：' + GENERATED_FROM.join('、'));
