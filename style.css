@@ -1112,6 +1112,388 @@ body[data-state="REVEAL"] #stage { animation: stageGlow .9s ease; }
   100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), var(--dy, 140px)) rotate(var(--rot, 180deg)) scale(1); }
 }
 
+/* ==================== 契约 v4 §4.6：美术升级（G7，全部是装饰层） ==================== */
+/* 原则：新增视觉一律 position:absolute / fixed 或伪元素，不参与流式布局 ⇒ 六档视口都不出滚动条；
+   颜色取现有令牌，正文对比度按 WCAG 实算 ≥4.5:1（对比度表见交付报告）。 */
+
+/* ---- 1) 舞台两侧幕布 .curtain + 顶部聚光灯 .spotlight（js/ui.js 缺失即自建） ---- */
+.curtain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: clamp(12px, 3vw, 54px);
+  z-index: 1;                       /* 压在舞台灯光之上、门牌之下（门牌是 .doors 的静态层，见下方 z-index） */
+  pointer-events: none;
+  opacity: .92;
+  background:
+    repeating-linear-gradient(90deg,
+      rgba(0, 0, 0, .5) 0 3px, rgba(126, 26, 40, .5) 3px 9px, rgba(56, 9, 17, .62) 9px 15px),
+    linear-gradient(180deg, #4c0f1b, #1a0409);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, .8);
+}
+.curtain-l { left: 0; border-right: 1px solid rgba(255, 212, 121, .16); }
+.curtain-r { right: 0; border-left: 1px solid rgba(255, 212, 121, .16); }
+.spotlight {
+  position: absolute;
+  left: 50%;
+  top: -8%;
+  width: min(76vw, 880px);
+  height: 84%;
+  z-index: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: radial-gradient(56% 60% at 50% 0%,
+    rgba(255, 238, 196, .17), rgba(255, 212, 121, .07) 44%, rgba(255, 212, 121, 0) 72%);
+  filter: blur(2px);
+}
+/* 门牌永远在幕布/聚光灯之上（幕布是 z-index 1 的装饰层） */
+.doors { position: relative; z-index: 2; }
+
+/* ---- 2) 门卡：浮雕纵深 + 金属执手 .door-knob + 悬停微倾 + 选中金边 ---- */
+.door {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .05),
+    inset 0 14px 28px rgba(0, 0, 0, .4),
+    inset 0 -20px 34px rgba(0, 0, 0, .5),
+    0 18px 40px rgba(0, 0, 0, .58);
+}
+/* 执手（竖向金属条）+ ::after 的金色球头，组成完整门把手；纯装饰、不吃点击 */
+.door-knob {
+  position: absolute;
+  right: calc(11% + clamp(6px, .8vh, 11px));
+  top: 50%;
+  width: clamp(5px, .72vh, 8px);
+  height: clamp(18px, 3.2vh, 34px);
+  transform: translateY(-50%);
+  border-radius: 99px;
+  background: linear-gradient(180deg, #f2f5ff, var(--metal-1) 30%, #6b7699 72%, #2b3348);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), 0 3px 8px rgba(0, 0, 0, .5),
+              inset 0 1px 0 rgba(255, 255, 255, .55);
+  pointer-events: none;
+}
+.door.is-live:hover {
+  transform: translateY(-6px) rotateY(-4.5deg);
+  border-color: rgba(245, 196, 81, .5);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .07),
+    inset 0 14px 28px rgba(0, 0, 0, .38),
+    0 26px 52px rgba(0, 0, 0, .62),
+    0 0 34px rgba(245, 196, 81, .18);
+}
+.door.is-live:active { transform: translateY(-2px) rotateY(-1.2deg) scale(.995); }
+.door.is-picked {
+  border-color: var(--gold-2);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 212, 121, .5),
+    inset 0 14px 28px rgba(0, 0, 0, .38),
+    0 20px 44px rgba(0, 0, 0, .58),
+    0 0 40px rgba(255, 212, 121, .28);
+}
+
+/* ---- 3) 首屏标题艺术字（#boot 里的 .boot-title；契约写作 #boot-title，两个选择器都覆盖） ---- */
+.boot-title,
+#boot-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  letter-spacing: .16em;
+  font-weight: 900;
+  background: linear-gradient(180deg, #fff6d8 4%, var(--gold-2) 42%, #b8801f 74%, #ffe9b8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .65)) drop-shadow(0 10px 26px rgba(245, 196, 81, .35));
+}
+.boot-sub {
+  color: #c3cde6;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .6);
+}
+
+/* ---- 4) 按钮质感：一层极淡的顶部高光 + 更沉的外阴影（不改三态语义） ---- */
+.ctrl,
+.modal-btn,
+.decide-btn,
+.bag-slot,
+.shop-buy {
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .45);
+}
+#btn-start.primary,
+#tutorial-next.primary,
+.modal-btn.primary {
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, .5), rgba(255, 255, 255, 0) 46%),
+    linear-gradient(180deg, #ffe6a2, var(--gold) 52%, #cf9a26);
+  box-shadow: 0 12px 30px rgba(245, 196, 81, .34), inset 0 1px 0 rgba(255, 255, 255, .6);
+}
+#btn-start-normal.ghost {
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, 0) 52%),
+    linear-gradient(180deg, #212b47, #121a30);
+}
+
+/* ---- 5) 结算彩带：契约点名的 #confetti + 40 枚 .confetti-piece（≤1.2s 清空） ---- */
+#confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 40;                      /* 低于弹层（60），高于舞台与 HUD */
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti-piece {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  width: 7px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--gold-2);
+  opacity: 0;
+  animation: confettiFly .95s cubic-bezier(.22, .7, .3, 1) forwards;
+}
+.confetti-piece[data-tone="1"] { background: var(--cyan); }
+.confetti-piece[data-tone="2"] { background: var(--green-lt); }
+.confetti-piece[data-tone="3"] { background: #ff9e6b; }
+
+/* ==================== 契约 v4 §4：体验增强（G1/G3/G4/G5/G6/G8） ==================== */
+/* 与 G7 同样的原则：新 UI 一律 position:fixed 或弹层内部元素，不新增布局块级元素。 */
+
+/* ---- G1 新手引导气泡（#tutorial 是 body 直接子元素；除气泡外不吃点击） ---- */
+#tutorial {
+  position: fixed;
+  inset: 0;
+  z-index: 45;                      /* 低于弹层 60、高于彩带 40 */
+  display: -ms-grid;
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  padding: 0 var(--pad) calc(var(--pad) + 3.4em);
+  pointer-events: none;
+}
+#tutorial[hidden] { display: none; }
+#tutorial-bubble {
+  pointer-events: auto;
+  width: min(92vw, 520px);
+  padding: .8em 1em;
+  border: 1px solid rgba(255, 212, 121, .46);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, rgba(22, 30, 54, .97), rgba(8, 12, 24, .97));
+  box-shadow: var(--shadow), 0 0 34px rgba(255, 212, 121, .16);
+}
+#tutorial-title {
+  margin: 0 0 .25em;
+  font-size: var(--fs-md);
+  color: var(--gold-2);
+  letter-spacing: .06em;
+}
+#tutorial-text {
+  margin: 0 0 .7em;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--fg);
+}
+#tutorial-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5em;
+}
+/* 引导高亮的锚点（门区 / 决策区 / 收手按钮） */
+.is-tutorial-target {
+  outline: 2px solid var(--gold-2);
+  outline-offset: 3px;
+  animation: tutPulse 1.4s ease-in-out infinite;
+}
+@keyframes tutPulse {
+  0%, 100% { box-shadow: 0 0 0 5px rgba(255, 212, 121, .14), 0 0 22px rgba(255, 212, 121, .24); }
+  50%      { box-shadow: 0 0 0 10px rgba(255, 212, 121, .22), 0 0 40px rgba(255, 212, 121, .42); }
+}
+
+/* ---- G3 设置弹层正文 ---- */
+.settings-body { display: flex; flex-direction: column; gap: .85em; }
+.settings-group { display: flex; flex-direction: column; gap: .4em; }
+.settings-label {
+  font-size: var(--fs-xs);
+  letter-spacing: .12em;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+}
+.settings-persona-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5em; }
+/* 引擎那份旧的 <ul class="persona-list"> 会被 ui.js 移除；万一它还在，也别排成三列网格 */
+ul.persona-list { display: block; margin: .2em 0 .6em; padding-left: 1.1em; }
+ul.persona-list > li.persona-row { display: list-item; }
+.persona-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .2em;
+  padding: .55em .4em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(24, 32, 58, .9), rgba(10, 14, 26, .9));
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color .12s, transform .12s, box-shadow .12s;
+}
+.persona-card:hover { border-color: rgba(255, 212, 121, .5); transform: translateY(-2px); }
+.persona-card:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
+.persona-card.is-active {
+  border-color: var(--gold-2);
+  box-shadow: inset 0 0 0 1px rgba(255, 212, 121, .4), 0 8px 22px rgba(0, 0, 0, .5);
+}
+.persona-icon { font-size: 1.5em; line-height: 1; }
+.persona-name { font-size: var(--fs-sm); font-weight: 700; color: #f4f8ff; }
+.persona-desc { font-size: 10.5px; line-height: 1.35; color: var(--fg-dim); text-align: center; }
+.switch-row { display: flex; gap: .5em; }
+.switch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .45em;
+  padding: .4em .8em;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #1d2540, #101528);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.switch-btn:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
+.switch-dot {
+  width: .62em;
+  height: .62em;
+  border-radius: 50%;
+  background: #55608a;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .5);
+}
+.switch-btn.is-on { border-color: rgba(86, 214, 154, .6); color: #d9ffee; }
+.switch-btn.is-on .switch-dot { background: var(--green-lt); box-shadow: 0 0 8px rgba(134, 242, 193, .8); }
+.speed-row { display: flex; gap: .5em; }
+.speed-btn {
+  flex: 1;
+  padding: .4em .2em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #1d2540, #101528);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.speed-btn:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
+.speed-btn.is-active { border-color: var(--gold-2); color: #ffeec2; box-shadow: inset 0 0 0 1px rgba(255, 212, 121, .35); }
+/* 右下角人格徽标（fixed 浮层，不参与布局） */
+.persona-chip {
+  position: fixed;
+  right: var(--pad);
+  bottom: calc(var(--pad) + 2.2em);
+  z-index: 24;                      /* 低于提词器 30、弹层 60 */
+  padding: .3em .7em;
+  border: 1px solid rgba(255, 212, 121, .4);
+  border-radius: 999px;
+  background: rgba(9, 13, 25, .86);
+  color: #ffeec2;
+  font-size: var(--fs-xs);
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.persona-chip[hidden] { display: none; }
+.persona-chip:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
+
+/* ---- G4/G5 图鉴页：成就墙 + 统计卡 ---- */
+.codex-achievements, .codex-stats { margin-top: 1em; }
+.codex-sub {
+  margin: 0 0 .5em;
+  font-size: var(--fs-sm);
+  letter-spacing: .1em;
+  color: var(--gold-2);
+}
+.ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: .5em; }
+.ach-card {
+  display: flex;
+  flex-direction: column;
+  gap: .18em;
+  padding: .5em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(24, 32, 58, .85), rgba(10, 14, 26, .85));
+}
+.ach-card.is-locked { border-style: dashed; border-color: var(--line-soft); }
+.ach-card.is-locked .ach-name { color: var(--fg-dim); }
+.ach-card.is-unlocked { border-color: rgba(255, 212, 121, .52); box-shadow: inset 0 0 0 1px rgba(255, 212, 121, .2); }
+.ach-icon { font-size: 1.25em; line-height: 1.1; }
+.ach-name { font-size: var(--fs-xs); font-weight: 700; color: #f4f8ff; }
+.ach-desc { font-size: 10.5px; line-height: 1.35; color: var(--fg-dim); }
+.stat-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: .4em; }
+.stat-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .4em;
+  padding: .35em .55em;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 14, 26, .72);
+}
+.stat-item dt { font-size: var(--fs-xs); color: var(--fg-dim); }
+.stat-item dd { margin: 0; font-size: var(--fs-sm); font-weight: 700; color: #f4f8ff; }
+
+/* ---- G3 旁白面板的人格图标前缀（走 ::before，不占文字节点、不干扰打字机） ---- */
+#narrator-text[data-persona-icon]:not([data-persona-icon=""])::before {
+  content: attr(data-persona-icon) " ";
+  opacity: .95;
+}
+/* ---- G3 结算点评行（引擎写 state.settleLine 时才出现） ---- */
+.settle-line {
+  margin: 0 0 .6em;
+  padding: .35em .6em;
+  border-left: 3px solid rgba(255, 212, 121, .55);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: rgba(255, 212, 121, .07);
+  color: #ffeec2;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* ---- G6 结算页种子行 ---- */
+.seed-row {
+  display: flex;
+  align-items: center;
+  gap: .5em;
+  margin: 0 0 .7em;
+  padding: .4em .6em;
+  border: 1px dashed rgba(255, 212, 121, .4);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 212, 121, .06);
+}
+.seed-label { font-size: var(--fs-xs); letter-spacing: .1em; color: var(--fg-dim); }
+.seed-tag {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: #ffeec2;
+}
+.seed-copy { flex: none; font-size: var(--fs-xs); padding: .3em .6em; }
+
+/* ---- G8 竖屏降级提示（纯浮层） ---- */
+.portrait-hint {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 44;
+  transform: translate(-50%, -50%);
+  padding: .6em 1.1em;
+  border: 1px solid rgba(255, 212, 121, .4);
+  border-radius: 999px;
+  background: rgba(8, 12, 24, .88);
+  color: #ffeec2;
+  font-size: var(--fs-sm);
+  letter-spacing: .08em;
+  pointer-events: none;
+}
+.portrait-hint[hidden] { display: none; }
+
 /* ============================ 契约 v3 表现层（§1.3 / §4.2 / §5.1 / §5.3） */
 
 /* 线索摘要（§1.3）：旁白面板里的第二行细字，只有「本轮已质疑过」时显示 */
@@ -1263,6 +1645,11 @@ body[data-state="REVEAL"] #stage { animation: stageGlow .9s ease; }
   .door.is-reveal-lose,
   .door.is-reveal-lose .door-face,
   .coin-fly,
+  .confetti-piece,
+  .door-knob,
+  .curtain,
+  .spotlight,
+  .is-tutorial-target,
   .vignette { animation: none !important; transition: none !important; }
   #narrator.is-speaking .narrator-text::after { opacity: 1 !important; }
   body[data-state="REVEAL"] #stage { animation: none !important; }

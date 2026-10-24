@@ -60,6 +60,10 @@
     coins: '<circle cx="12" cy="12" r="7.4"/><path d="M12 8.6v6.8M9.7 10.2h4.6M9.7 13.8h4.6"/>',
     suspicion: '<path d="M2.6 12S6.2 6.2 12 6.2 21.4 12 21.4 12 17.8 17.8 12 17.8 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.5"/>',
     patience: '<path d="M12 19.6S5.2 15.4 5.2 10.8A4 4 0 0 1 12 8.1a4 4 0 0 1 6.8 2.7c0 4.6-6.8 8.8-6.8 8.8z"/>',
+    /* 契约 v4 §4.6 G7 点名要的 ic-eye / ic-heart：与怀疑值（眼）、耐心（心）同一套图形，
+       单独起名是为了让 HUD 与后续页面能按语义引用，不再借 suspicion/patience 的名字。 */
+    eye: '<path d="M2.6 12S6.2 6.2 12 6.2 21.4 12 21.4 12 17.8 17.8 12 17.8 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.5"/>',
+    heart: '<path d="M12 19.6S5.2 15.4 5.2 10.8A4 4 0 0 1 12 8.1a4 4 0 0 1 6.8 2.7c0 4.6-6.8 8.8-6.8 8.8z"/>',
     ticket: '<path d="M3.2 8.6a2 2 0 0 0 1.8-1.8h14a2 2 0 0 0 1.8 1.8v6.8a2 2 0 0 0-1.8 1.8H5a2 2 0 0 0-1.8-1.8z"/><path d="M14.4 6.8v10.4" stroke-dasharray="2 2.2"/>',
     mute: '<path d="M4.2 9.6h2.6l3.6-3.2v11.2l-3.6-3.2H4.2z"/><path d="M15 9.6l4 4.8M19 9.6l-4 4.8"/>',
     double: '<path d="M5.4 6.8l4.8 5.2-4.8 5.2"/><path d="M12.4 6.8l4.8 5.2-4.8 5.2"/>',
@@ -67,7 +71,10 @@
     box: '<path d="M4 9.2l8-4 8 4-8 4z"/><path d="M4 9.2V16l8 4 8-4V9.2"/><path d="M12 13.2V20"/>',
     charm: '<path d="M12 3.4l2.5 5.2 5.6.8-4.1 3.9 1 5.6-5-2.8-5 2.8 1-5.6-4.1-3.9 5.6-.8z"/>'
   };
-  var ICON_NAMES = ['coins', 'suspicion', 'patience', 'ticket', 'mute', 'double', 'fuse', 'box', 'charm'];
+  var ICON_NAMES = ['coins', 'eye', 'heart', 'suspicion', 'patience', 'ticket', 'mute', 'double', 'fuse', 'box', 'charm'];
+
+  /** HUD 三张卡片用哪枚图标（契约 v4 §4.6：ic-coins / ic-eye / ic-heart）。 */
+  var HUD_ICON = { coins: 'coins', suspicion: 'eye', patience: 'heart' };
 
   /** 拼出整份 <symbol> 精灵；只插一次。 */
   function spriteMarkup() {
@@ -120,6 +127,7 @@
   var speaking = false;
   var modalEpoch = 0;
   var modalActions = 0;
+  var modalKind = '';
   var lastFocus = null;
   var locks = { pick: false, decide: false };
   var lockTimers = { pick: null, decide: null };
@@ -129,6 +137,11 @@
   var bagSig = '';               /* 背包内容签名，避免每帧重建 DOM */
   var iconReady = false;         /* 图标精灵是否已插入（只插一次） */
   var vignetteReady = false;     /* 舞台暗角层是否已插入（只插一次） */
+  var decorReady = false;        /* 幕布 / 聚光灯装饰层是否已插入（只插一次） */
+  var chipReady = false;         /* 人格徽标 #persona-chip 是否已插入（只插一次） */
+  var portraitReady = false;     /* 竖屏提示 #portrait-hint 是否已自建（只插一次） */
+  var tut = { active: false, index: 0, steps: [], phase: null, done: false, autoTried: false };
+  var prefCache = null;          /* 最近一次 render 读到的偏好（只读缓存，用于音效/BGM/动画速度开关） */
 
   /* ------------------------------------------------------------------ 工具 */
   function $(id) { return doc && doc.getElementById ? doc.getElementById(id) : null; }
@@ -218,6 +231,7 @@
   /** 音效总线：kind ∈ 'click' | 'open' | 'win' | 'lose' | 'buy'；总时长 ≤0.3s，gain ≤0.045。 */
   function sfx(kind) {
     if (audioMuted()) return;                       /* 静音：不发一个采样 */
+    if (prefCache && prefCache.sound === false) return;  /* 设置里的「音效」关：同样一条路径都不走 */
     var ctx = armAudio();
     if (!ctx) return;                               /* 无 WebAudio：静默无操作 */
     try {
@@ -333,12 +347,13 @@
     if (ac && bgm.gain) rampParam(bgm.gain.gain, 0.0001, ac, 0.18);
   }
 
-  /** 按当前 state 与页面可见性同步 BGM（muted / IDLE / GAME_OVER / 隐藏 → 停）。 */
+  /** 按当前 state 与页面可见性同步 BGM（muted / 设置关 / IDLE / GAME_OVER / 隐藏 → 停）。 */
   function bgmSync(state) {
     var s = state || liveState();
     var phase = PHASES[str(s && s.phase)] ? str(s.phase) : 'IDLE';
     var hidden = !!(doc && doc.hidden);
-    var want = !audioMuted() && !hidden && phase !== 'IDLE' && phase !== 'GAME_OVER';
+    var bgmOff = !!(prefCache && prefCache.bgm === false);
+    var want = !audioMuted() && !bgmOff && !hidden && phase !== 'IDLE' && phase !== 'GAME_OVER';
     if (want) bgmStart(); else bgmStop();
   }
 
@@ -423,6 +438,8 @@
     dom.btnReset = $('btn-reset');
     dom.btnDemo = $('btn-demo');
     dom.btnShop = $('btn-shop');
+    dom.btnHelp = $('btn-help');
+    dom.btnSettings = $('btn-settings');
     dom.btnMute = $('btn-mute');
     dom.btnSkip = $('btn-skip');
     dom.controls = $('controls');
@@ -432,6 +449,13 @@
     dom.stageHint = $('stage-hint');
     dom.rehearsal = $('rehearsal');
     dom.rehearsalText = $('rehearsal-text');
+    dom.tutorial = $('tutorial');
+    dom.tutorialTitle = $('tutorial-title');
+    dom.tutorialText = $('tutorial-text');
+    dom.tutorialNext = $('tutorial-next');
+    dom.tutorialSkip = $('tutorial-skip');
+    dom.confetti = $('confetti');
+    dom.portraitHint = $('portrait-hint');
     dom.narrator = $('narrator');
     dom.narratorText = $('narrator-text');
     dom.narratorSkip = $('narrator-skip');
@@ -628,7 +652,9 @@
         '<span class="door-icon" aria-hidden="true">' + esc(icon) + '</span>' +
         '<span class="door-name">' + esc(name) + '</span>' +
       '</span>' +
-      '<span class="door-tag">' + esc(tag) + '</span>');
+      '<span class="door-tag">' + esc(tag) + '</span>' +
+      /* 契约 v4 §4.6 G7 点名的门把手（纯装饰，绝对定位，不参与门的文字排布） */
+      '<span class="door-knob" aria-hidden="true"></span>');
   }
 
   function doorAria(dd, state, i) {
@@ -691,6 +717,431 @@
       case 'GAME_OVER': return '耐心耗尽，本局结束。';
       default: return '';
     }
+  }
+
+  /* ============================== 契约 v4 §4：体验增强（G1 引导 / G2 键盘 / G3 设置
+     / G4+G5 成就统计 / G6 种子 / G8 竖屏）。所有 Game 新 API 都经 gameCall() 兜底：
+     引擎比 UI 晚就绪、字段缺失或抛错时一律静默降级，绝不让垫片环境崩掉。 ============ */
+
+  /** 安全调用 Game 上的新 API；不存在或抛错都返回 null（只 warn）。 */
+  function gameCall(name, args) {
+    var g = gameRef;
+    if (!g || typeof g[name] !== 'function') return null;
+    try { return g[name].apply(g, args || []); } catch (e) { logErr(name, e); return null; }
+  }
+
+  /** Game.prefs() 的兜底 + 归一化。
+   *  引擎侧的键名是 sound / bgm / animationSpeed（'slow'|'normal'|'fast'），
+   *  契约侧写的是 sfx / animSpeed，这里统一成 {bgm,sound,animSpeed,personality,onboarded}。 */
+  function prefsOf(state) {
+    var raw = gameCall('prefs');
+    var s = state || liveState();
+    var f = (s && s.flags) || {};
+    if (!raw || typeof raw !== 'object') raw = {};
+    var speed = raw.animSpeed;
+    if (speed === undefined || speed === null) speed = raw.animationSpeed;
+    if (speed === 'fast') speed = 1.5;
+    else if (speed === 'slow') speed = 0.5;
+    else if (speed === 'off') speed = 1;
+    if (typeof speed !== 'number' || !isFinite(speed) || speed <= 0) speed = 1;
+    var on = raw.sound === undefined ? raw.sfx : raw.sound;
+    return {
+      personality: str(raw.personality || raw.persona || (s && s.personality)) || 'sarcastic',
+      bgm: raw.bgm === undefined ? !f.muted : raw.bgm !== false,
+      sound: on === undefined ? !f.muted : on !== false,
+      animSpeed: speed,
+      onboarded: raw.onboarded === undefined ? !!f.onboarded : raw.onboarded === true
+    };
+  }
+
+  /** 动画速度 → 时长系数（1.5× 档 ⇒ 时长 ×0.667）。 */
+  function speedScale() {
+    var v = prefCache ? num(prefCache.animSpeed, 1) : 1;
+    if (!(v > 0)) v = 1;
+    return 1 / v;
+  }
+  function scaled(ms) { return Math.max(80, Math.round(num(ms, 0) * speedScale())); }
+
+  /* ---- 人格表（契约 §3 personas.json；数据层未就绪时用契约里的三个 id 兜底） ---- */
+  var PERSONA_FALLBACK = [
+    { id: 'sarcastic', name: '毒舌', icon: '😏', desc: '嘴上不饶人，真假照说' },
+    { id: 'gentle', name: '温柔', icon: '🌸', desc: '语气软，谎话概率略低' },
+    { id: 'crazy', name: '癫狂', icon: '🤪', desc: '语无伦次，谎话概率略高' }
+  ];
+  function personaList() {
+    var d = root.GameData;
+    var src = (d && (d.personas || d.PERSONAS)) || gameCall('personalities') || null;
+    var out = [];
+    if (src && src.length) {
+      for (var i = 0; i < src.length; i++) {
+        var it = src[i] || {};
+        var id = str(it.id);
+        if (!id) continue;
+        out.push({
+          id: id, name: str(it.name || it.title || id),
+          icon: str(it.icon || ''), desc: str(it.desc || it.text || '')
+        });
+      }
+    }
+    return out.length ? out : PERSONA_FALLBACK.slice();
+  }
+  function personaOf(id) {
+    var list = personaList();
+    for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
+    return list[0];
+  }
+
+  /* ------------------------------------------------- G1 新手引导（三步气泡） */
+  /* 引擎的 tutorialSteps() 里 anchor 传的是 CSS 选择器（'#doors' / '#narrator' / '#decide' / '#controls'），
+     契约 §4.1 写的是语义名（'doors'|'decide'|'cashout'）—— 这里两种都认。 */
+  var ANCHOR_ALIAS = { doors: '#doors', decide: '#decide', narrator: '#narrator', controls: '#controls', hud: '#hud' };
+  function anchorEl(anchor) {
+    var D = d();
+    var raw = str(anchor);
+    if (!raw) return null;
+    if (raw === 'cashout') {
+      var list = D.decide && D.decide.querySelectorAll ? D.decide.querySelectorAll('.decide-btn') : [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].getAttribute('data-choice') === 'cashout') return list[i];
+      }
+      return D.decide;
+    }
+    var sel = ANCHOR_ALIAS[raw] || raw;
+    if (sel.charAt(0) === '#') return $(sel.slice(1));
+    if (doc && doc.querySelector) return doc.querySelector(sel);
+    return $(sel);
+  }
+  function clearTutAnchor() {
+    var D = d();
+    if (!D.body || !D.body.querySelectorAll) return;
+    var list = D.body.querySelectorAll('.is-tutorial-target');
+    for (var i = 0; i < list.length; i++) list[i].classList.remove('is-tutorial-target');
+  }
+  function renderTutorial() {
+    var D = d();
+    if (!D.tutorial || !tut.active) return;
+    var step = tut.steps[tut.index] || {};
+    text(D.tutorialTitle, str(step.title || '新手引导'));
+    text(D.tutorialText, str(step.text || ''));
+    if (D.tutorialNext) text(D.tutorialNext, tut.index >= tut.steps.length - 1 ? '开始' : '下一步');
+    clearTutAnchor();
+    var el = anchorEl(str(step.anchor));
+    if (el && el.classList) el.classList.add('is-tutorial-target');
+    D.tutorial.hidden = false;
+  }
+  /** 收尾：跳过走 tutorial_skip（引擎会给一句「随时按 ? 看规则」提示），走完最后一步走 tutorial_done。 */
+  function finishTutorial(start, skipped) {
+    var D = d();
+    if (!tut.active) return;
+    var mode = str(lastState && lastState.mode) === 'normal' ? 'normal' : 'demo';
+    tut.active = false;
+    tut.done = true;
+    clearTutAnchor();
+    if (D.tutorial) D.tutorial.hidden = true;
+    emit({ type: skipped ? 'tutorial_skip' : 'tutorial_done' });
+    if (start) emit({ type: 'start', mode: mode });
+  }
+  /** 契约 v4 §4.1：启动引导。引擎未就绪 / 已完成过（tutorialSteps() 为空）时返回 false。 */
+  UI.startTutorial = function () {
+    var D = d();
+    if (!D.tutorial) return false;
+    var steps = gameCall('tutorialSteps');
+    if (!steps || !steps.length) return false;
+    tut.steps = steps;
+    tut.index = 0;
+    tut.active = true;
+    tut.done = false;
+    tut.phase = str((lastState || {}).phase) || 'IDLE';
+    renderTutorial();
+    return true;
+  };
+  function maybeAutoTutorial() {
+    if (tut.active || tut.done || tut.autoTried) return;
+    tut.autoTried = true;                       /* 只尝试一次：引擎未就绪就不打扰 */
+    if (prefsOf().onboarded) return;
+    UI.startTutorial();
+  }
+  /** 引导防卡死（契约 §4.1）：局终相位（结算 / 收手 / 结束）时若引导还挂着，自动收尾。 */
+  var TUT_AUTO_DONE = { SETTLE_ROUND: 1, CASHOUT: 1, GAME_OVER: 1 };
+  function autoDoneTutorial(state) {
+    if (!tut.active) return;
+    var phase = str(state && state.phase);
+    if (TUT_AUTO_DONE[phase]) finishTutorial(false, true);
+  }
+
+  /* ------------------------------------------------- G2 键盘全操作（§4.2） */
+  function typingTarget(t) {
+    if (!t) return false;
+    var tag = str(t.tagName).toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    return t.isContentEditable === true;
+  }
+  function phaseNow() {
+    return PHASES[str((lastState || {}).phase)] ? str(lastState.phase) : 'IDLE';
+  }
+  /** 走与鼠标点击完全相同的通道：同样的 canDecide/锁/置灰提示，只是入口换成键盘。 */
+  function keyDecide(choice) {
+    if (phaseNow() !== 'DECIDE' || !canDecide()) return false;
+    var D = d();
+    var list = D.decide && D.decide.querySelectorAll ? D.decide.querySelectorAll('.decide-btn') : [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].getAttribute('data-choice') !== choice) continue;
+      if (list[i].disabled || list[i].getAttribute('data-hard') === 'true') return false;
+      if (list[i].getAttribute('aria-disabled') === 'true') {
+        sfx('click');
+        UI.toast(list[i].getAttribute('data-hint') || '该决策当前不可用');
+        return true;
+      }
+      sfx('click');
+      armLock('decide', CLICK_LOCK_MS);
+      emit({ type: 'decide', choice: choice });
+      return true;
+    }
+    return false;
+  }
+  function keyPick(slot) {
+    if (phaseNow() !== 'PICK' || !canPick()) return false;
+    var el = doorEl(slot);
+    if (!el || (el.classList && el.classList.contains('is-locked'))) return false;
+    sfx('click');
+    armLock('pick', CLICK_LOCK_MS);
+    emit({ type: 'pick', slot: slot });
+    return true;
+  }
+  function keyModalPrimary() {
+    var D = d();
+    if (!D.modal || D.modal.hidden || !D.modal.querySelector) return false;
+    var p = D.modal.querySelector('.modal-btn.primary');
+    if (!p || p.disabled) return false;
+    activateModalChoice(p);
+    return true;
+  }
+
+  /* ------------------------------------------------- G3 设置弹层（§4.3） */
+  /** 动画速度三档 ↔ 引擎偏好值（引擎的键是 animationSpeed，取 'slow'|'normal'|'fast'）。 */
+  var SPEED_STEPS = [0.5, 1, 1.5];
+  function speedToPref(v) {
+    var n = num(v, 1);
+    return n < 0.75 ? 'slow' : (n > 1.25 ? 'fast' : 'normal');
+  }
+  function switchHtml(key, label, on) {
+    return '<button type="button" class="switch-btn' + (on ? ' is-on' : '') + '" data-pref="' + esc(key) +
+           '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '">' +
+           '<span class="switch-dot" aria-hidden="true"></span>' + esc(label) + '</button>';
+  }
+  /** 设置弹层正文。引擎自己那份旧的 `<ul class="persona-list">` + 声音文字行会被移除，
+   *  避免与契约 §4.3 的控件重复（引擎若哪天删掉旧的，这里就是无操作）。 */
+  function dropLegacySettings() {
+    var D = d();
+    if (!D.modalBody || !D.modalBody.querySelector || !D.modalBody.removeChild) return;
+    var legacy = D.modalBody.querySelector('ul.persona-list');
+    if (legacy && legacy.parentNode) legacy.parentNode.removeChild(legacy);
+    var ps = D.modalBody.querySelectorAll ? D.modalBody.querySelectorAll('p') : [];
+    for (var i = 0; i < ps.length; i++) {
+      var txt = str(ps[i].textContent);
+      var isSoundLine = txt.indexOf('声音') === 0 && txt.indexOf('动画速度') >= 0;
+      var isPersonaHead = txt === '旁白人格';    /* 引擎的小标题，和我 settings-label「旁白人格」重复 */
+      if ((isSoundLine || isPersonaHead) && ps[i].parentNode) {
+        ps[i].parentNode.removeChild(ps[i]);
+      }
+    }
+  }
+  function renderSettings() {
+    var D = d();
+    if (!D.modalBody || !doc.createElement) return;
+    if (D.modalBody.querySelector && D.modalBody.querySelector('#settings-body')) return;
+    var p = prefsOf();
+    var cur = str(p.personality) || str(liveState().personality) || 'sarcastic';
+    var list = personaList();
+    var html = '<div class="settings-group"><div class="settings-label">旁白人格</div><div class="settings-persona-row">';
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i];
+      html += '<button type="button" class="persona-card' + (it.id === cur ? ' is-active' : '') +
+              '" data-persona="' + esc(it.id) + '" aria-pressed="' + (it.id === cur ? 'true' : 'false') + '">' +
+              '<span class="persona-icon" aria-hidden="true">' + esc(it.icon) + '</span>' +
+              '<span class="persona-name">' + esc(it.name) + '</span>' +
+              '<span class="persona-desc">' + esc(it.desc) + '</span></button>';
+    }
+    html += '</div></div>';
+    html += '<div class="settings-group"><div class="settings-label">声音</div><div class="switch-row">' +
+            switchHtml('bgm', '背景音乐', p.bgm !== false) + switchHtml('sound', '音效', p.sound !== false) +
+            '</div></div>';
+    var curSpeed = num(p.animSpeed, 1);
+    html += '<div class="settings-group"><div class="settings-label">动画速度</div><div class="speed-row">';
+    for (var k = 0; k < SPEED_STEPS.length; k++) {
+      var act = Math.abs(SPEED_STEPS[k] - curSpeed) < 0.01;
+      html += '<button type="button" class="speed-btn' + (act ? ' is-active' : '') + '" data-speed="' + SPEED_STEPS[k] +
+              '" aria-pressed="' + (act ? 'true' : 'false') + '">' + SPEED_STEPS[k] + '×</button>';
+    }
+    html += '</div></div>';
+    dropLegacySettings();
+    var wrap = doc.createElement('div');
+    wrap.setAttribute('id', 'settings-body');
+    wrap.setAttribute('class', 'settings-body');
+    wrap.innerHTML = html;
+    D.modalBody.appendChild(wrap);
+  }
+  function ensurePersonaChip() {
+    var D = d();
+    if (D.personaChip) return D.personaChip;
+    if (chipReady || !doc.createElement || !D.body) return D.personaChip || null;
+    chipReady = true;
+    var btn = doc.createElement('button');
+    btn.setAttribute('id', 'persona-chip');
+    btn.setAttribute('class', 'persona-chip');
+    btn.setAttribute('type', 'button');
+    btn.setAttribute('title', '旁白人格（点击打开设置）');
+    D.body.appendChild(btn);
+    on(btn, 'click', function () { sfx('click'); emit({ type: 'open_settings' }); });
+    D.personaChip = btn;
+    return btn;
+  }
+  function renderPersonaChip(state) {
+    var el = ensurePersonaChip();
+    if (!el) return;
+    var s = state || liveState();
+    var id = str(s.personality) || str(prefsOf(s).personality) || 'sarcastic';
+    var p = personaOf(id);
+    text(el, str(p.icon) + ' ' + str(p.name));
+    el.hidden = str(s.phase) === 'IDLE';
+  }
+
+  /* ------------------------------------------------- G4+G5 图鉴页成就与统计（§4.4） */
+  function statItem(k, v) {
+    return '<div class="stat-item"><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>';
+  }
+  function renderCodexExtras() {
+    var D = d();
+    if (!D.modalBody || !doc.createElement) return;
+    /* 优先 Game.achievementList()（[{id,name,icon,desc,unlocked}]）；只拿到 id 数组时退化为「全锁定，名字用 id」 */
+    var ach = gameCall('achievementList');
+    if (!ach || !ach.length) {
+      var ids = gameCall('achievements') || [];
+      ach = [];
+      for (var z = 0; z < ids.length; z++) {
+        if (typeof ids[z] === 'string') ach.push({ id: ids[z], name: ids[z], icon: '🏆', desc: '', unlocked: true });
+      }
+    }
+    if (ach && ach.length && !(D.modalBody.querySelector && D.modalBody.querySelector('#codex-achievements'))) {
+      var got = 0;
+      var html = '<h4 class="codex-sub">成就</h4><div class="ach-grid">';
+      for (var i = 0; i < ach.length; i++) {
+        var a = ach[i] || {};
+        var ok = a.unlocked === true;
+        if (ok) got++;
+        html += '<div class="ach-card' + (ok ? ' is-unlocked' : ' is-locked') + '" data-ach="' + esc(str(a.id)) + '">' +
+                '<span class="ach-icon" aria-hidden="true">' + esc(str(a.icon || '🏆')) + '</span>' +
+                '<span class="ach-name">' + esc(ok ? str(a.name) : '？？？') + '</span>' +
+                '<span class="ach-desc">' + esc(str(a.desc)) + '</span></div>';
+      }
+      html += '</div>';
+      var box = doc.createElement('section');
+      box.setAttribute('id', 'codex-achievements');
+      box.setAttribute('class', 'codex-achievements');
+      box.setAttribute('data-unlocked', String(got));
+      box.innerHTML = html;
+      D.modalBody.appendChild(box);
+    }
+    var st = gameCall('stats');
+    if (st && !(D.modalBody.querySelector && D.modalBody.querySelector('#codex-stats'))) {
+      var rate = '—';
+      if (st.challengeRate != null) rate = Math.round(num(st.challengeRate, 0) * 100) + '%';
+      else if (num(st.challenges, 0) > 0) rate = Math.round(num(st.challengeWins, 0) / num(st.challenges, 1) * 100) + '%';
+      var card = doc.createElement('section');
+      card.setAttribute('id', 'codex-stats');
+      card.setAttribute('class', 'codex-stats');
+      card.innerHTML = '<h4 class="codex-sub">统计</h4><div class="stat-list">' +
+        statItem('总局数', num(st.games, 0)) + statItem('最佳金币', num(st.bestCoins, 0)) +
+        statItem('最佳轮次', num(st.bestRound, 0)) + statItem('质疑成功率', rate) +
+        statItem('解锁结局', num(st.endings, 0)) + '</div>';
+      D.modalBody.appendChild(card);
+    }
+  }
+
+  /* ------------------------------------------------- G6 种子行与复制（§4.5） */
+  /** 契约 v4 §4.3：结算点评行。引擎写了 state.settleLine 才出现；body 里已有同句则不重复。 */
+  function settleRow(spec) {
+    var kind = str(spec && spec.kind);
+    if (kind !== 'round' && kind !== 'cashout' && kind !== 'gameover') return null;
+    var line = str(liveState().settleLine);
+    if (!line || !doc.createElement) return null;
+    var D = d();
+    if (D.modalBody && str(D.modalBody.textContent).indexOf(line) >= 0) return null;
+    var el = doc.createElement('p');
+    el.setAttribute('class', 'settle-line');
+    text(el, line);
+    return el;
+  }
+  /** 结算页的「种子：xxxx」行（契约 §4.5）。只在结算类弹层出现：
+   *  round（每轮结算）/cashout（收手）/gameover（局终）；
+   *  规则、设置、图鉴等弹层不出现（否则它们会平白多出一个「复制种子」按钮）。 */
+  var SEED_KINDS = { round: 1, cashout: 1, gameover: 1 };
+  function seedRow(spec) {
+    if (!spec || !SEED_KINDS[str(spec.kind)]) return null;
+    var tag = gameCall('seedTag');
+    if (!tag || !doc.createElement) return null;
+    if (str(spec.body).indexOf('种子') >= 0) return null;   /* 引擎已写就不重复 */
+    var row = doc.createElement('div');
+    row.setAttribute('class', 'seed-row');
+    row.innerHTML = '<span class="seed-label">种子</span><code class="seed-tag">' + esc(tag) + '</code>' +
+                    '<button type="button" class="seed-copy modal-btn" data-choice="save_seed">复制种子</button>';
+    return row;
+  }
+  function copySeed() {
+    var tag = str(gameCall('seedTag') || '');
+    var done = false;
+    try {
+      var nav = root.navigator;
+      if (nav && nav.clipboard && nav.clipboard.writeText) {
+        var pr = nav.clipboard.writeText(tag);
+        if (pr && pr.then) pr.then(null, function () {});
+        done = true;
+      }
+    } catch (e) { logErr('copySeed', e); }
+    UI.toast(done ? ('种子已复制：' + tag) : ('种子：' + tag + '（复制不可用，手动记一下）'));
+  }
+
+  /* ------------------------------------------------- G8 竖屏降级提示（§4.7） */
+  var portraitSent = false;
+  function ensurePortraitHint() {
+    var D = d();
+    if (D.portraitHint) return D.portraitHint;
+    if (portraitReady || !doc.createElement || !D.body) return null;
+    portraitReady = true;                     /* 插过一次就不再重试 */
+    var el = doc.createElement('section');
+    el.setAttribute('id', 'portrait-hint');
+    el.setAttribute('class', 'portrait-hint');
+    el.setAttribute('aria-hidden', 'true');
+    el.hidden = true;
+    el.textContent = '建议横屏体验';
+    D.body.appendChild(el);
+    D.portraitHint = el;
+    return el;
+  }
+  function syncPortrait(state) {
+    var el = ensurePortraitHint();
+    if (!el) return;
+    var s = state || liveState();
+    var h = num(root.innerHeight, 0);
+    var rehearsal = !!(s && s.flags && s.flags.rehearsal);
+    var show = h > 0 && h < 400 && !rehearsal;
+    el.hidden = !show;
+    if (show && !portraitSent && !(s.flags && s.flags.portraitWarned)) {
+      portraitSent = true;                    /* 只提示一次 */
+      emit({ type: 'set_pref', key: 'portraitWarned', value: true });
+    }
+  }
+
+  /** 弹层动作按钮的统一激活路径（鼠标点击与键盘空格共用，保证锁/关层语义一致）。 */
+  function activateModalChoice(btn) {
+    if (!btn) return;
+    var choice = str(btn.getAttribute('data-choice'));
+    var D = d();
+    var before = modalEpoch;
+    sfx('click');
+    if (choice === 'save_seed') copySeed();
+    emit({ type: 'modal_choice', choice: choice });
+    if (modalEpoch === before && D.modal && !D.modal.hidden) UI.closeModal();
   }
 
   /* ================================================================== API */
@@ -810,12 +1261,46 @@
         emit({ type: 'modal_choice', choice: 'buy:' + buy.getAttribute('data-item') });
         return;
       }
+      /* 契约 v4 §4.5 G6：正文里的「复制种子」 */
+      var seed = closest(e.target, '.seed-copy');
+      if (seed && D.modal && D.modal.contains(seed)) {
+        sfx('click');
+        copySeed();
+        emit({ type: 'modal_choice', choice: 'save_seed' });
+        return;
+      }
+      /* 契约 v4 §4.3 G3：人格单选 / 声音开关 / 动画速度 */
+      var pcard = closest(e.target, '.persona-card');
+      if (pcard && D.modal && D.modal.contains(pcard)) {
+        var pid = str(pcard.getAttribute('data-persona'));
+        if (pid) { sfx('click'); emit({ type: 'set_personality', id: pid }); }
+        return;
+      }
+      var sw = closest(e.target, '.switch-btn');
+      if (sw && D.modal && D.modal.contains(sw)) {
+        sfx('click');
+        emit({ type: 'set_pref', key: str(sw.getAttribute('data-pref')), value: sw.getAttribute('aria-checked') !== 'true' });
+        return;
+      }
+      var sp = closest(e.target, '.speed-btn');
+      if (sp && D.modal && D.modal.contains(sp)) {
+        sfx('click');
+        /* 契约 §2.3 写的是 apply_speed{value}，但引擎目前只认 set_pref{key:'animationSpeed'}，
+           这里发引擎真正消费的那条，保证点下去立刻生效；若引擎日后补上 apply_speed，改这一处即可。 */
+        emit({ type: 'set_pref', key: 'animationSpeed', value: speedToPref(sp.getAttribute('data-speed')) });
+        return;
+      }
       if (e.target === D.modal && modalActions === 0) UI.closeModal();
     });
     on(doc, 'keydown', function (e) {
       var key = e.key || '';
       if (key === 'Escape' || e.keyCode === 27) {
-        if (D.modal && !D.modal.hidden && modalActions === 0) UI.closeModal();
+        /* 契约 v4 §4.2：Esc 关闭弹层。必选流程（本轮结算/结算页/结束页）必须点按钮，
+           避免玩家按 Esc 后停在无弹层的 SETTLE_ROUND / CASHOUT / GAME_OVER 里。 */
+        if (D.modal && !D.modal.hidden) {
+          var mustChoose = modalKind === 'round' || modalKind === 'cashout' || modalKind === 'gameover';
+          if (modalActions === 0 || !mustChoose) UI.closeModal();
+        }
         return;
       }
       if (key === 'Tab' && D.modal && !D.modal.hidden) {
@@ -824,8 +1309,47 @@
         var first = f[0], lastEl = f[f.length - 1];
         if (e.shiftKey && doc.activeElement === first) { e.preventDefault(); lastEl.focus(); }
         else if (!e.shiftKey && doc.activeElement === lastEl) { e.preventDefault(); first.focus(); }
+        return;
       }
+
+      /* ---- 契约 v4 §4.2 G2：键盘全操作（与鼠标走同一条通道） ---- */
+      if (typingTarget(e.target)) return;                     /* 输入框聚焦时不抢键 */
+      if (D.modal && !D.modal.hidden) {                       /* 弹层打开：空格 = 主按钮 */
+        if (key === ' ' || key === 'Spacebar' || key === 'Enter') {
+          if (keyModalPrimary()) e.preventDefault();
+        }
+        return;
+      }
+      if (key === '1' || key === '2' || key === '3') {
+        if (keyPick(num(key, 1) - 1)) e.preventDefault();
+        return;
+      }
+      var low = str(key).toLowerCase();
+      if (low === 'q') { if (keyDecide('challenge')) e.preventDefault(); return; }
+      if (low === 'd') { if (keyDecide('double')) e.preventDefault(); return; }
+      if (low === 's') { if (keyDecide('switch')) e.preventDefault(); return; }
+      if (low === 'c') { if (keyDecide('cashout')) e.preventDefault(); return; }
+      if (low === 'm') { emit({ type: 'toggle_mute' }); sfx('click'); e.preventDefault(); return; }
+      if (key === '?' || low === 'h') { emit({ type: 'open_help' }); sfx('click'); e.preventDefault(); return; }
+      if (key === ' ' || key === 'Spacebar') {
+        if (phaseNow() === 'IDLE') { emit({ type: 'start', mode: 'demo' }); sfx('click'); e.preventDefault(); }
+        return;
+      }
+      if (low === ',' || low === '.') { emit({ type: 'open_settings' }); sfx('click'); e.preventDefault(); }
     });
+
+    /* --- 契约 v4 G2/G1/G8：规则与设置按钮、引导气泡、竖屏提示 --- */
+    on(D.btnHelp, 'click', function () { sfx('click'); emit({ type: 'open_help' }); });
+    on(D.btnSettings, 'click', function () { sfx('click'); emit({ type: 'open_settings' }); });
+    on(D.tutorialSkip, 'click', function () { sfx('click'); finishTutorial(false, true); });
+    on(D.tutorialNext, 'click', function () {
+      sfx('click');
+      if (!tut.active) return;
+      if (tut.index >= tut.steps.length - 1) { finishTutorial(true); return; }
+      tut.index++;
+      renderTutorial();
+    });
+    on(root, 'resize', function () { syncPortrait(liveState()); });
 
     /* --- 音频手势解锁：AudioContext 必须在首次用户手势之后创建 --- */
     for (var gi = 0; gi < GESTURE.length; gi++) {
@@ -880,6 +1404,7 @@
     /* HUD 卡片化（契约 §4.2③）：补内联 SVG 图标，只补一次；数字变化仍走 UI.flash */
     ensureIconSprite();
     ensureVignette();
+    ensureStageDecor();      /* 契约 v4 §4.6 G7：幕布 + 聚光灯（纯装饰，缺失即自建） */
     decorateHud('coins', D.hudCoins);
     decorateHud('suspicion', D.hudSuspicion);
     decorateHud('patience', D.hudPatience);
@@ -942,12 +1467,25 @@
     toggle(D.narrator, 'is-speaking', speaking);
     if (D.narratorText && !speaking && !str(D.narratorText.textContent)) text(D.narratorText, '……');
 
+    /* 偏好缓存（只读；音效/BGM 开关与动画速度都看它） */
+    prefCache = prefsOf(s);
+
+    /* 旁白面板的人格图标前缀（契约 v4 §4.3）：走 ::before 的 content，不占文字节点、不干扰打字机 */
+    if (D.narratorText && D.narratorText.setAttribute && !speaking) {
+      var pv = personaOf(str(s.personality) || str(prefCache.personality));
+      D.narratorText.setAttribute('data-persona-icon', str(pv && pv.icon));
+    }
+
     /* 背包（契约 §3.1/§3.4）：IDLE / ROUND_INTRO 隐藏，其余相位只读渲染 */
     renderBag(s, phase);
 
     /* 契约 v3：旁白线索摘要（§1.3）+ 演示提词器（§5.1），都只读 state */
     renderClaim(s);
     renderRehearsal(s);
+    renderPersonaChip(s);     /* 契约 v4 §4.3：右下角人格徽标（只读 state，缺失即自建） */
+    syncPortrait(s);          /* 契约 v4 §4.7：矮视口竖屏提示（纯浮层） */
+    maybeAutoTutorial();      /* 契约 v4 §4.1：未引导过就自动开引导（引擎未就绪则不打扰） */
+    autoDoneTutorial(s);      /* 契约 v4 §4.1：局终相位自动收尾，防卡死 */
 
     UI.setControls(s);
 
@@ -1202,30 +1740,75 @@
     vignetteReady = true;
   }
 
-  /** 大奖彩带（P1，纯装饰）：撒一把 CSS 彩带，1.4s 后自己收干净。
-      只为「演出感」服务 —— 不读也不写 state，动画在 reduced-motion 下由 CSS 整条关掉。 */
+  /** 大奖彩带（契约 v4 §4.6 G7，纯装饰）：优先用 index.html 的 #confetti ——
+      在里面生成 40 枚 .confetti-piece，≤1.2s 后清空并重新隐藏；
+      index.html 还没有这个容器时退回旧的 #stage 内装饰层，保证双路径都能演出。
+      prefers-reduced-motion 下直接不生成（动效全停）。不读也不写 state。 */
   function confetti() {
+    if (prefersReducedMotion()) return;
     var D = d();
-    if (!D.stage || !doc.createElement || !D.stage.appendChild) return;
-    var host = doc.createElement('div');
-    host.className = 'confetti-layer';
-    host.setAttribute('aria-hidden', 'true');
-    for (var i = 0; i < 18; i++) {
+    if (!doc.createElement) return;
+    var box = $('confetti');
+    var host = null;
+    if (box) {
+      clear(box);
+      box.hidden = false;
+      host = box;
+    } else if (D.stage && D.stage.appendChild) {
+      host = doc.createElement('div');
+      host.className = 'confetti-layer';
+      host.setAttribute('aria-hidden', 'true');
+      D.stage.appendChild(host);
+    } else {
+      return;
+    }
+    var piece = box ? 'confetti-piece' : 'confetti';
+    var count = box ? 40 : 18;      /* 契约 §4.6 要求 40 枚 */
+    for (var i = 0; i < count; i++) {
       var bit = doc.createElement('i');
-      bit.className = 'confetti';
+      bit.className = piece;
       bit.setAttribute('data-tone', String(i % 4));
       bit.setAttribute('style',
-        '--dx:' + ((i * 37 % 220) - 110) + 'px;' +
-        '--dy:' + (70 + (i * 53 % 130)) + 'px;' +
+        '--dx:' + ((i * 37 % 240) - 120) + 'px;' +
+        '--dy:' + (70 + (i * 53 % 140)) + 'px;' +
         '--rot:' + ((i * 71 % 540) - 270) + 'deg;' +
-        'animation-delay:' + ((i % 6) * 40) + 'ms');
+        'animation-delay:' + ((i % 8) * 34) + 'ms');
       host.appendChild(bit);
     }
-    D.stage.appendChild(host);
-    later(1400, function () {
-      if (host.parentNode && host.parentNode.removeChild) host.parentNode.removeChild(host);
-      else if (D.stage.removeChild) D.stage.removeChild(host);
+    later(1200, function () {
+      if (box) {
+        clear(box);
+        box.hidden = true;
+      } else if (host.parentNode && host.parentNode.removeChild) {
+        host.parentNode.removeChild(host);
+      } else if (D.stage && D.stage.removeChild) {
+        D.stage.removeChild(host);
+      }
     });
+  }
+
+  /** 舞台装饰（契约 v4 §4.6 G7）：两侧幕布 .curtain + 顶部聚光灯 .spotlight。
+      纯装饰层：position:absolute、pointer-events:none、不参与布局，因此不会产生滚动条；
+      index.html 里没有这三个元素，由这里「缺失即自建」（与 #vignette 同一套兜底思路）。 */
+  function ensureStageDecor() {
+    if (decorReady) return;
+    var D = d();
+    var stage = D.stage;
+    if (!stage || !doc.createElement || !stage.appendChild) return;
+    decorReady = true;
+    addDecor(stage, 'curtain curtain-l');
+    addDecor(stage, 'curtain curtain-r');
+    addDecor(stage, 'spotlight');
+  }
+
+  /** 往舞台里补一个装饰 div；同 class 已存在就不重复插。 */
+  function addDecor(stage, cls) {
+    var sel = '.' + cls.split(' ').join('.');
+    if (stage.querySelector && stage.querySelector(sel)) return;
+    var el = doc.createElement('div');
+    el.setAttribute('class', cls);          /* 垫片里 className 直赋值不可靠，统一 setAttribute */
+    el.setAttribute('aria-hidden', 'true');
+    stage.appendChild(el);
   }
 
   /** HUD 卡片化（契约 §4.2③）：给三张卡片补一个内联 SVG 图标，只补一次。 */
@@ -1235,7 +1818,7 @@
     var span = doc.createElement('span');
     span.className = 'hud-icon';
     span.setAttribute('aria-hidden', 'true');
-    span.innerHTML = iconUse(res, 'hud-svg');
+    span.innerHTML = iconUse(HUD_ICON[res] || res, 'hud-svg');
     if (el.insertBefore) el.insertBefore(span, el.firstChild);
     else el.appendChild(span);
   }
@@ -1449,6 +2032,22 @@
       if (D.modalBody.insertBefore && D.modalBody.firstChild) D.modalBody.insertBefore(endRow, D.modalBody.firstChild);
       else D.modalBody.appendChild(endRow);
     }
+    /* 契约 v4 §4.3：结算点评行（引擎写入 state.settleLine 时才出现） */
+    var sline = settleRow(spec);
+    if (sline && D.modalBody && D.modalBody.appendChild) {
+      if (D.modalBody.insertBefore && D.modalBody.firstChild) D.modalBody.insertBefore(sline, D.modalBody.firstChild);
+      else D.modalBody.appendChild(sline);
+    }
+    /* 契约 v4：设置弹层（§4.3）、图鉴页成就与统计（§4.4）、种子行（§4.5） */
+    var kindV4 = str(spec.kind);
+    modalKind = kindV4;
+    if (kindV4 === 'settings') renderSettings();
+    if (kindV4 === 'codex') renderCodexExtras();
+    var srow = seedRow(spec);
+    if (srow && D.modalBody && D.modalBody.appendChild) {
+      if (D.modalBody.insertBefore && D.modalBody.firstChild) D.modalBody.insertBefore(srow, D.modalBody.firstChild);
+      else D.modalBody.appendChild(srow);
+    }
     clear(D.modalActions);
     var acts = (spec.actions && spec.actions.length) ? spec.actions : [];
     modalActions = acts.length;
@@ -1463,11 +2062,7 @@
         if (a.hint) btn.title = str(a.hint);
         on(btn, 'click', function (ev) {
           if (ev.preventDefault) ev.preventDefault();
-          sfx('click');
-          var before = modalEpoch;
-          emit({ type: 'modal_choice', choice: btn.getAttribute('data-choice') });
-          /* game 在同一次 action 里换/关了弹层就不再插手；它自己会调 closeModal */
-          if (modalEpoch === before && D.modal && !D.modal.hidden) UI.closeModal();
+          activateModalChoice(btn);       /* 与键盘空格共用（G2） */
         });
         D.modalActions.appendChild(btn);
       })(acts[i]);
@@ -1490,6 +2085,7 @@
     D.modal.hidden = true;
     toggle(D.body, 'has-modal', false);
     modalActions = 0;
+    modalKind = '';
     var f = lastFocus;
     lastFocus = null;
     if (f && f.focus && f.parentNode) { try { f.focus(); } catch (e) { /* noop */ } }
@@ -1529,9 +2125,9 @@
     if (!el) { a.finish(); return a.promise; }
 
     var len = full.length;
-    var interval = len ? Math.max(14, Math.min(38, Math.round(1000 / len))) : 0;
+    var interval = len ? Math.max(10, Math.round(Math.max(14, Math.min(38, Math.round(1000 / len))) * speedScale())) : 0;
     var typeMs = len * interval;
-    var hold = 320;
+    var hold = scaled(320);
 
     (function type(i) {
       if (a.finished) return;
@@ -1571,12 +2167,12 @@
     if (el) el.classList.add('anim-hold', 'is-opening');
     UI.toast(msg);
 
-    a.after(720).then(function () {
+    a.after(scaled(720)).then(function () {
       if (a.finished) return;
       if (el) { el.classList.remove('is-opening'); el.classList.add('is-opened', 'anim-hold'); }
       faceDoor(el, { slot: s, itemId: p.itemId, opened: true, revealed: false, peeked: false }, null, s);
       UI.banner(msg, 1800);
-      a.after(420).then(function () {
+      a.after(scaled(420)).then(function () {
         if (a.finished) return;
         if (el) el.classList.remove('anim-hold');
         a.finish();
@@ -1640,7 +2236,8 @@
     if (el) el.classList.add('anim-hold', 'anim-shake');
     UI.banner(line, mult > 1 ? 2100 : 1700);
 
-    var total = mult > 1 ? 1300 : 950;      /* 加倍时动画略长（清单阶段 3） */
+    /* 加倍时动画略长（清单阶段 3）；再乘以设置里的动画速度系数（0.5×/1×/1.5×） */
+    var total = scaled(mult > 1 ? 1300 : 950);
     var t1 = Math.round(total * 0.42);
     var t2 = Math.round(total * 0.75);
 
@@ -1721,7 +2318,7 @@
   };
 
   /* --------------------------------------------------------------- 启动自检 */
-  UI.version = 'stage3-ui/3.0';
+  UI.version = 'stage4-ui/4.0';
   try { cacheDom(); } catch (e) { logErr('cacheDom', e); }
 
   root.UI = UI;
