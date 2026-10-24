@@ -250,6 +250,98 @@
     } catch (e) { /* 静默 */ }
   }
 
+  /* ------------------------------------------------- BGM（契约 v3 §5.2） */
+  /* 2 个低频正弦振荡器循环 + 轻微 detune，按轮次升调；gain 峰值 0.028（≤0.03）。
+     停止条件：muted / IDLE / GAME_OVER / 页面隐藏（visibilitychange）。
+     只在首次手势解锁之后启动；振荡器建好就复用，重复调用绝不叠加实例。
+     无 AudioContext（Node 垫片 / 老浏览器）时全程静默降级。 */
+  var BGM_GAIN = 0.028;
+  var BGM_DETUNE = 1.005;                  /* 第二个振荡器的频率比：轻微 detune 产生拍频 */
+  var bgm = { gain: null, osc: [], on: false };
+
+  /** 轮次 → BGM 基频：第 1–2 轮 100Hz、第 3 轮 130Hz、≥4 轮 160Hz。 */
+  function bgmFreq(round) {
+    var r = Math.max(1, Math.round(num(round, 1)));
+    if (r >= 4) return 160;
+    if (r >= 3) return 130;
+    return 100;
+  }
+
+  /** 参数平滑：优先 setTargetAtTime，退而线性斜坡，最后直接赋值（垫片/老实现）。 */
+  function rampParam(param, value, ctx, tau) {
+    if (!param) return;
+    try {
+      if (param.setTargetAtTime) param.setTargetAtTime(value, ctx.currentTime, tau);
+      else if (param.linearRampToValueAtTime) param.linearRampToValueAtTime(value, ctx.currentTime + tau * 4);
+      else param.value = value;
+    } catch (e) { /* 静默 */ }
+  }
+
+  /** 建 BGM 图（2 osc → 1 gain → destination）；失败时清掉半成品并降级为无声。 */
+  function bgmBuild(ctx) {
+    var made = [];
+    try {
+      var g = ctx.createGain();
+      g.connect(ctx.destination);
+      var f = bgmFreq(liveState().round);
+      for (var i = 0; i < 2; i++) {
+        var o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f * (i === 0 ? 1 : BGM_DETUNE), ctx.currentTime);
+        o.connect(g);
+        o.start();
+        made.push(o);
+      }
+      bgm.gain = g;
+      bgm.osc = made;
+      rampParam(g.gain, 0.0001, ctx, 0.2);
+      return true;
+    } catch (e) {
+      for (var k = 0; k < made.length; k++) { try { made[k].stop(); } catch (e2) { /* 静默 */ } }
+      bgm.gain = null;
+      bgm.osc = [];
+      logErr('bgmBuild', e);
+      return false;
+    }
+  }
+
+  /** 起 BGM：已在播就只调音高（round 升调），绝不新建第二组振荡器。 */
+  function bgmStart() {
+    if (audioMuted()) return;                        /* 静音：一个振荡器都不开 */
+    var ctx = armAudio();
+    if (!ctx) return;
+    try {
+      if (!bgm.on) {
+        if (!bgm.osc.length && !bgmBuild(ctx)) return;
+        bgm.on = true;
+      }
+      var f = bgmFreq(liveState().round);
+      for (var i = 0; i < bgm.osc.length; i++) {
+        bgm.osc[i].frequency.setValueAtTime(f * (i === 0 ? 1 : BGM_DETUNE), ctx.currentTime);
+      }
+      rampParam(bgm.gain.gain, BGM_GAIN, ctx, 0.45);
+    } catch (e) {
+      logErr('bgmStart', e);
+      bgmStop();
+    }
+  }
+
+  /** 停 BGM：把 gain 拉到 0（振荡器留着，下次进来直接升回来，不重建实例）。 */
+  function bgmStop() {
+    if (!bgm.on) return;
+    bgm.on = false;
+    if (ac && bgm.gain) rampParam(bgm.gain.gain, 0.0001, ac, 0.18);
+  }
+
+  /** 按当前 state 与页面可见性同步 BGM（muted / IDLE / GAME_OVER / 隐藏 → 停）。 */
+  function bgmSync(state) {
+    var s = state || liveState();
+    var phase = PHASES[str(s && s.phase)] ? str(s.phase) : 'IDLE';
+    var hidden = !!(doc && doc.hidden);
+    var want = !audioMuted() && !hidden && phase !== 'IDLE' && phase !== 'GAME_OVER';
+    if (want) bgmStart(); else bgmStop();
+  }
+
   /* ------------------------------------------------------------ 运行时状态 */
   /** 只读取当前状态（优先 Game.state），绝不写。 */
   function liveState() { return (gameRef && gameRef.state) || lastState || {}; }
@@ -338,6 +430,8 @@
     dom.roundBanner = $('round-banner');
     dom.doors = $('doors');
     dom.stageHint = $('stage-hint');
+    dom.rehearsal = $('rehearsal');
+    dom.rehearsalText = $('rehearsal-text');
     dom.narrator = $('narrator');
     dom.narratorText = $('narrator-text');
     dom.narratorSkip = $('narrator-skip');
@@ -562,7 +656,8 @@
       case 'challenge': {
         var cost = suspicionCost();
         if (sus < cost) return { on: false, hard: false, hint: '怀疑值不足：质疑需要 ' + cost + ' 点怀疑值' };
-        return { on: true, hard: false, hint: '消耗 ' + cost + ' 点怀疑值，戳穿旁白的谎' };
+        /* 契约 v3 §1.3：质疑=验证线索，title 固定这句（消耗点数由 #stage-hint 说明）。 */
+        return { on: true, hard: false, hint: '质疑 / 验证线索' };
       }
       case 'double':
         if (state && state.doubled) return { on: false, hard: true, hint: '本轮已加倍，不能叠加' };
@@ -734,8 +829,10 @@
 
     /* --- 音频手势解锁：AudioContext 必须在首次用户手势之后创建 --- */
     for (var gi = 0; gi < GESTURE.length; gi++) {
-      on(doc, GESTURE[gi], function () { armAudio(); }, { once: true });
+      on(doc, GESTURE[gi], function () { armAudio(); bgmSync(liveState()); }, { once: true });
     }
+    /* BGM（契约 v3 §5.2）：页面切到后台就停，切回来按当前相位续上 */
+    on(doc, 'visibilitychange', function () { bgmSync(liveState()); });
 
     bound = true;
     cacheDecideButtons();
@@ -848,6 +945,10 @@
     /* 背包（契约 §3.1/§3.4）：IDLE / ROUND_INTRO 隐藏，其余相位只读渲染 */
     renderBag(s, phase);
 
+    /* 契约 v3：旁白线索摘要（§1.3）+ 演示提词器（§5.1），都只读 state */
+    renderClaim(s);
+    renderRehearsal(s);
+
     UI.setControls(s);
 
     /* 相位变化即释放连点锁 */
@@ -889,6 +990,8 @@
       item.appendChild(float);
       later(950, function () { if (float.parentNode) float.parentNode.removeChild(float); });
     }
+    /* 金币飞入（契约 v3 §5.3）：|Δ| ≥ 10 才飞，位置取自被选门（没有则舞台中心） */
+    if (res === 'coins' && Math.abs(v) >= 10) coinFly(v);
     if (state && state[res] != null) setHudValue(item, state[res]);
   };
 
@@ -924,6 +1027,151 @@
 
   /** 便捷口：直接写 #stage-hint。 */
   UI.hint = function (t) { text(d().stageHint, t); };
+
+  /* ------------------- 契约 v3 表现层：提词器 / 线索摘要 / 开奖光效 / 金币飞 / 结局行 */
+
+  /** 系统是否要求减少动效（装饰动画总开关；拿不到 matchMedia 就当「否」）。 */
+  function prefersReducedMotion() {
+    try {
+      return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { return false; }
+  }
+
+  /** 量元素在视口中的位置；量不到（垫片 / 未布局）返回 null。 */
+  function rectOf(node) {
+    if (!node || typeof node.getBoundingClientRect !== 'function') return null;
+    try {
+      var r = node.getBoundingClientRect();
+      if (!r) return null;
+      if (!r.width && !r.height && !r.left && !r.top) return null;
+      return r;
+    } catch (e) { return null; }
+  }
+
+  /** 演示提词器（§5.1）：flags.rehearsal 为真时把引擎给的下一步动作写进 #rehearsal-text。 */
+  function renderRehearsal(state) {
+    var D = d();
+    if (!D.rehearsal) return;
+    var on = !!(state && state.flags && state.flags.rehearsal);
+    D.rehearsal.hidden = !on;
+    if (!on) { text(D.rehearsalText, ''); return; }
+    var tip = '';
+    try {
+      if (gameRef && typeof gameRef.hintNextAction === 'function') {
+        var h = gameRef.hintNextAction();
+        tip = (h && typeof h === 'object') ? str(h.text) : str(h);
+      }
+    } catch (e) { logErr('hintNextAction', e); tip = ''; }
+    text(D.rehearsalText, tip);
+  }
+
+  /** 线索摘要（§1.3）：claim → 一行人话。 */
+  function claimText(claim) {
+    if (!claim || typeof claim !== 'object') return '';
+    var t = str(claim.type);
+    var slot = Math.round(num(claim.slot, -1));
+    var who = slot >= 0 ? (slot + 1) + ' 号门' : '某扇门';
+    if (t === 'slot_kind') return who + '里是' + itemView(claim.kind).name;
+    /* 「大奖在 3 号门」：与 ui.js 的主持人文案 / game.js 的「换到 3 号门」保持同一空格习惯 */
+    if (t === 'big_prize_in') return '大奖在 ' + who;
+    if (t === 'picked_kind') return '你选的是' + itemView(claim.kind).name;
+    return '';
+  }
+
+  /** 旁白面板里的线索摘要行：DOM 由 ui.js 补（index.html 不动），隐藏时不占位。 */
+  function ensureClaimLine() {
+    var D = d();
+    if (!D.narrator || !doc.createElement) return null;
+    var el = $('narrator-claim');
+    if (!el) {
+      el = doc.createElement('span');
+      el.setAttribute('id', 'narrator-claim');
+      el.className = 'narrator-claim';
+      el.setAttribute('aria-hidden', 'true');
+      el.hidden = true;
+      D.narrator.appendChild(el);
+    }
+    return el;
+  }
+
+  /** 只在「本轮已质疑过」时显示线索摘要。 */
+  function renderClaim(state) {
+    var el = ensureClaimLine();
+    if (!el) return;
+    var lc = state && state.lastChallenge;
+    var t = (lc && lc.claim) ? claimText(lc.claim) : '';
+    el.hidden = !t;
+    text(el, t ? ('线索：' + t) : '');
+  }
+
+  /** 开奖光效（§5.3）：金晕 / 红闪，≤600ms 自动摘掉；reduced-motion 下不加动画。 */
+  function revealGlow(el, outcome) {
+    if (!el || !el.classList || !outcome || outcome === 'click') return;
+    if (prefersReducedMotion()) return;
+    var cls = outcome === 'win' ? 'is-reveal-win' : 'is-reveal-lose';
+    el.classList.remove('is-reveal-win', 'is-reveal-lose');
+    void el.offsetWidth;                                 /* 强制重排以重启动画 */
+    el.classList.add(cls);
+    var tag = el;
+    later(600, function () { if (tag.classList) tag.classList.remove('is-reveal-win', 'is-reveal-lose'); });
+  }
+
+  /**
+   * 金币飞入（§5.3）：|delta| ≥ 10 时从被选门（没有则舞台中心）飞向 #hud-coins。
+   * 容器 position:fixed + 绝对定位子元素，不参与布局、不产生滚动条；≤400ms 后自清。
+   */
+  function coinFly(delta) {
+    var D = d();
+    if (!D.body || !D.hudCoins || !doc.createElement) return;
+    if (prefersReducedMotion()) return;                  /* 减少动效：只保留最终数值 */
+    var v = Math.round(num(delta, 0));
+    if (!v) return;
+    var picked = null;
+    var doors = D.doors && D.doors.querySelectorAll ? D.doors.querySelectorAll('.door') : null;
+    for (var i = 0; doors && i < doors.length; i++) {
+      if (doors[i].classList && doors[i].classList.contains('is-picked')) { picked = doors[i]; break; }
+    }
+    var r0 = rectOf(picked) || rectOf(D.stage) || { left: 0, top: 0, width: 0, height: 0 };
+    var r1 = rectOf(D.hudCoins) || { left: r0.left, top: r0.top + 120, width: 0, height: 0 };
+    var sx = r0.left + r0.width / 2;
+    var sy = r0.top + r0.height / 2;
+    var ex = r1.left + r1.width / 2;
+    var ey = r1.top + r1.height / 2;
+    var layer = doc.createElement('div');
+    layer.className = 'coin-fly-layer';
+    layer.setAttribute('aria-hidden', 'true');
+    var coin = doc.createElement('span');
+    coin.className = 'coin-fly' + (v < 0 ? ' is-out' : '');
+    coin.setAttribute('aria-hidden', 'true');
+    coin.setAttribute('style',
+      'left:' + Math.round(sx) + 'px;top:' + Math.round(sy) + 'px;' +
+      '--fly-x:' + Math.round(ex - sx) + 'px;--fly-y:' + Math.round(ey - sy) + 'px');
+    coin.textContent = (v > 0 ? '+' : '−') + Math.abs(v);
+    layer.appendChild(coin);
+    D.body.appendChild(layer);
+    later(420, function () { if (layer.parentNode) layer.parentNode.removeChild(layer); });
+  }
+
+  /**
+   * 结算弹层的「结局」行（§4.2）：spec.ending = {id,title,desc}。
+   * game.js 的 body 里已经写了「结局：<title>」+ desc，故这里只补一枚标题徽标，
+   * 且仅在 body 没提到这个 title 时才补 desc，避免同一句话出现两次。
+   */
+  function endingRow(spec) {
+    var ending = spec && spec.ending;
+    if (!ending || typeof ending !== 'object' || !doc.createElement) return null;
+    var title = str(ending.title);
+    var desc = str(ending.desc);
+    if (!title && !desc) return null;
+    var inBody = title && typeof spec.body === 'string' && spec.body.indexOf(title) >= 0;
+    var row = doc.createElement('div');
+    row.className = 'ending-row';
+    row.setAttribute('data-ending', str(ending.id));
+    row.innerHTML = '<span class="ending-kicker">结局：</span>' +
+      '<span class="ending-name">' + esc(title || '——') + '</span>' +
+      ((desc && !inBody) ? '<span class="ending-desc">' + esc(desc) + '</span>' : '');
+    return row;
+  }
 
   /* ------------------------------------------------- 图标精灵 / HUD 卡片化 */
   /** 把 <symbol> 精灵插进 body 一次；容器 0×0 且 position:absolute，不参与布局。 */
@@ -1195,6 +1443,12 @@
     lastFocus = doc.activeElement;
     text(D.modalTitle, str(spec.title));
     setModalBody(spec.body);
+    /* 契约 v3 §4.2：结算页的「结局」徽标（body 里已有同句时不重复 desc） */
+    var endRow = endingRow(spec);
+    if (endRow && D.modalBody && D.modalBody.appendChild) {
+      if (D.modalBody.insertBefore && D.modalBody.firstChild) D.modalBody.insertBefore(endRow, D.modalBody.firstChild);
+      else D.modalBody.appendChild(endRow);
+    }
     clear(D.modalActions);
     var acts = (spec.actions && spec.actions.length) ? spec.actions : [];
     modalActions = acts.length;
@@ -1371,6 +1625,7 @@
         revealFace();
         el.__sig = null;
       }
+      revealGlow(el, outcome);                 /* 契约 v3 §5.3：开奖金晕 / 红闪（≤600ms） */
       sfx(outcome);
       applyDeltas();
       /* 大奖时刻撒彩带（P1 装饰）：进账 ≥100 金币才算「大奖」 */
@@ -1461,11 +1716,12 @@
       D.btnReset.title = '重置回演示起点（1 秒内回到初始状态）';
       D.btnReset.disabled = false;
     }
+    bgmSync(s);                 /* 契约 v3 §5.2：静音/相位/可见性变化即时反映到 BGM */
     return UI;
   };
 
   /* --------------------------------------------------------------- 启动自检 */
-  UI.version = 'stage2-ui/2.0';
+  UI.version = 'stage3-ui/3.0';
   try { cacheDom(); } catch (e) { logErr('cacheDom', e); }
 
   root.UI = UI;

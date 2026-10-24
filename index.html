@@ -34,6 +34,9 @@
     <div id="stage-hint" class="hint"></div>
   </main>
 
+  <!-- 演示提词器（契约 v3 §5.1）：?rehearsal=1 或 #rehearsal 时由 js/ui.js 显示，固定定位不占布局 -->
+  <section id="rehearsal" hidden aria-live="polite"><span id="rehearsal-text"></span></section>
+
   <!-- 旁白条 -->
   <aside id="narrator" aria-live="polite">
     <div class="narrator-avatar" aria-hidden="true">旁白</div>

@@ -52,6 +52,18 @@
    *  但不落盘（不写 CodexStore / localStorage），只在本进程内记忆。 */
   var mutedPref = false;
 
+  /** 契约 v3 §5.1：演示提词器开关（?rehearsal=1 或 #rehearsal），本进程内记忆、跨重置保持。 */
+  var rehearsalPref = false;
+
+  /** 读 URL 里的提词器开关；deps.location 可注入（测试用）。 */
+  function rehearsalFromUrl(opts, deps) {
+    if (opts && opts.rehearsal === true) return true;
+    var loc = (deps && deps.location) || root.location || {};
+    var q = String(loc.search || '');
+    var h = String(loc.hash || '');
+    return /(?:[?&])rehearsal=1(?:&|$)/.test(q) || h === '#rehearsal';
+  }
+
   var DEFAULT_TIMINGS = {
     introMs: 800, narratorMs: 2000, hostOpenMs: 600,
     revealMs: 900, revealDoubledExtraMs: 400, resetMs: 1000
@@ -173,6 +185,7 @@
       Game._emitter = new root.Emitter();
       Game._timers = [];
       Game._generation = 0;
+      rehearsalPref = rehearsalFromUrl(opts, Game.deps);
       Game.state = Game._freshState(opts.mode || MODES.DEMO, opts.seed);
       var ui = Game._ui();
       if (ui.init) { try { ui.init(Game); } catch (e) { Game._warn('ui.init', e); } }
@@ -512,20 +525,29 @@
       var line = s.narratorLines[0] || null;
       var res = narrator.resolveChallenge(s, line) || {};
 
+      /* 契约 v3 §2.1：连击奖励 —— 连续识破给递增金币（20 / 30 / 40 封顶）。 */
+      var comboStep = cfg.comboStep == null ? 10 : cfg.comboStep;
+      var comboCap = cfg.comboCap == null ? 20 : cfg.comboCap;
       var effect = { id: 'challenge', suspicion: -cost };
       if (res.ok) {
-        effect.coins = res.coins == null ? (cfg.winCoins == null ? 20 : cfg.winCoins) : res.coins;
-        s.challengeStreak = (s.challengeStreak || 0) + 1;
+        var streakAfter = (s.challengeStreak || 0) + 1;
+        var bonus = Math.min(streakAfter - 1, Math.floor(comboCap / comboStep)) * comboStep;
+        var base = res.coins == null ? (cfg.winCoins == null ? 20 : cfg.winCoins) : res.coins;
+        effect.coins = base + bonus;
+        s.challengeStreak = streakAfter;
+        s.challengesWon = (s.challengesWon || 0) + 1;
       } else {
         effect.coins = -(res.coins == null ? (cfg.loseCoins == null ? 20 : cfg.loseCoins) : Math.abs(res.coins));
         effect.patience = res.patience == null ? -(cfg.losePatience == null ? 1 : cfg.losePatience) : -Math.abs(res.patience);
         s.challengeStreak = 0;
+        s.challengesLost = (s.challengesLost || 0) + 1;
         s.grudge = (s.grudge || 0) + 1;
       }
       var applied = Game._apply(effect, { source: 'challenge' });
       s = applied.state;
       s.lastChallenge = {
         ok: !!res.ok, text: res.text || '', hint: res.hint || null,
+        claim: res.claim || null,             // 契约 v3 §1.3：本轮被验证的线索
         grudgeLevel: s.grudge, delta: applied.delta
       };
       Game._render();
@@ -809,9 +831,19 @@
       if (narrator && typeof narrator.highlight === 'function') {
         highlight = narrator.highlight(s, s.roundResult) || '';
       }
+      /* 契约 v3 §4.2：多结局（在称号之外再给一层结局 + 旁白赛后点评）。 */
+      s.endingId = Game.computeEndingId(s);
+      var ending = Game.endingSpec(s.endingId);
+      var endingLine = null;
+      if (narrator && typeof narrator.endingLine === 'function') {
+        try { endingLine = narrator.endingLine(s, s.endingId); } catch (e) { endingLine = null; }
+      }
+      if (s.codex.endings.indexOf(ending.title) < 0) s.codex.endings.push(ending.title);
       var body = '<p class="big">最终金币：<b>' + s.coins + '</b></p>' +
         '<p>闯到第 <b>' + s.round + '</b> 轮</p>' +
         '<p>称号：<b>' + rating.title + '</b></p>' +
+        '<p>结局：<b>' + ending.title + '</b>' + (ending.desc ? '（' + ending.desc + '）' : '') + '</p>' +
+        (endingLine && endingLine.text ? '<p class="muted">旁白：「' + endingLine.text + '」</p>' : '') +
         (s.spentCoins > 0
           ? '<p class="muted">你在商店花了 <b>' + s.spentCoins + '</b> 金币，买了 ' + (s.shopBuys || 0) + ' 件道具。</p>'
           : '') +
@@ -821,7 +853,7 @@
       Game._saveBest();
       var ui = Game._ui();
       Game._endingModal = {
-        kind: 'cashout', title: '本局结算', body: body,
+        kind: 'cashout', title: '本局结算', body: body, ending: ending,
         actions: [
           { label: '再来一局', choice: 'restart', primary: true },
           { label: '看图鉴', choice: 'codex' }
@@ -841,14 +873,19 @@
       var s = Game.state;
       Game._clearTimers();
       Game.setState(STATES.GAME_OVER);
+      /* 契约 v3 §4.2：失败局同样给结局（通常是「被旁白 PUA」或兜底）。 */
+      s.endingId = Game.computeEndingId(s);
+      var ending = Game.endingSpec(s.endingId);
+      if (s.codex.endings.indexOf(ending.title) < 0) s.codex.endings.push(ending.title);
       var body = '<p>耐心归零，旁白赢了这一局。</p>' +
         '<p>你在第 <b>' + s.round + '</b> 轮被劝退，手里还剩 <b>' + s.coins + '</b> 金币。</p>' +
+        '<p>结局：<b>' + ending.title + '</b>' + (ending.desc ? '（' + ending.desc + '）' : '') + '</p>' +
         '<p class="fine">游戏内金币纯属娱乐，非真实货币。</p>';
       Game._saveCodex();
       Game._saveBest();
       var ui = Game._ui();
       Game._endingModal = {
-        kind: 'gameover', title: '耐心归零', body: body,
+        kind: 'gameover', title: '耐心归零', body: body, ending: ending,
         actions: [
           { label: '再来一局', choice: 'restart', primary: true },
           { label: '看图鉴', choice: 'codex' }
@@ -991,6 +1028,109 @@
       return best[0].slot;
     },
 
+    /* ------------------------------------------- 契约 v3：结局与提词器 */
+
+    /**
+     * 契约 v3 §4.2：结局判定（纯函数，qa 直接调）。
+     * 按 config.endings[id].priority 从高到低取第一个满足条件的；未配置时用内置优先级。
+     */
+    computeEndingId: function (state) {
+      var s = state || Game.state || {};
+      var cfg = config();
+      var table = cfg.endings || {};
+      var initial = cfg.initial || {};
+      var master = cfg.cashoutMaster || {};
+      var TIER = { all_in: 100, comeback: 90, iron_patience: 80, master: 70, pua: 60, euro: 50, anti: 40, normal: 0 };
+      var coins = s.coins || 0;
+      var low = (s.minCoins == null) ? coins : s.minCoins;
+      var conds = {
+        all_in: (s.challengesWon || 0) >= 3 && (s.challengesLost || 0) === 0,
+        comeback: low <= 10 && coins >= 200,
+        iron_patience: s.patience != null && initial.patience != null &&
+          s.patience === initial.patience && (s.round || 0) >= 3,
+        master: (s.round || 0) >= (master.minRound == null ? 4 : master.minRound) &&
+          coins >= (master.minCoins == null ? 200 : master.minCoins),
+        pua: coins <= 99,
+        euro: coins >= 200 && coins <= 299,
+        anti: coins >= 300,
+        normal: true
+      };
+      var ids = Object.keys(conds);
+      var priorityOf = function (id) {
+        var def = table[id];
+        if (def && def.priority != null) return def.priority;
+        return TIER[id] == null ? 0 : TIER[id];
+      };
+      ids.sort(function (a, b) { return priorityOf(b) - priorityOf(a); });
+      for (var i = 0; i < ids.length; i++) {
+        if (conds[ids[i]]) return ids[i];
+      }
+      return 'normal';
+    },
+
+    /** 结局展示文案（数据层未就绪时退回内置表）。 */
+    endingSpec: function (id) {
+      var table = config().endings || {};
+      var def = table[id] || null;
+      if (def) return { id: id, title: def.title || id, desc: def.desc || '', lineKind: def.lineKind || null };
+      var fallback = {
+        all_in: '全识破', comeback: '绝地翻盘', iron_patience: '稳如老狗', master: '见好就收大师',
+        pua: '被旁白 PUA', euro: '欧皇候选', anti: '反杀旁白', normal: '普通赌徒'
+      };
+      return { id: id, title: fallback[id] || id, desc: '', lineKind: null };
+    },
+
+    /**
+     * 契约 v3 §5.1：演示提词器 —— 告诉操作者「现在该点什么」。
+     * 只读状态，不产生副作用；ui.js 在 flags.rehearsal 为真时调用。
+     */
+    hintNextAction: function () {
+      var s = Game.state;
+      var out = { phase: (s && s.phase) || '', text: '', choice: null };
+      if (!s) return out;
+      switch (s.phase) {
+        case STATES.IDLE:
+          out.text = '点「开始」进入第 1 轮（演示模式按固定剧本走）。';
+          break;
+        case STATES.ROUND_INTRO:
+        case STATES.NARRATOR:
+          out.text = '听旁白说完，再点一扇门。';
+          break;
+        case STATES.PICK:
+          out.text = '点任意一扇门——旁白说的真假由你判断。';
+          break;
+        case STATES.HOST_OPEN:
+          out.text = '看主持人开哪扇门，那是这一轮的线索。';
+          break;
+        case STATES.DECIDE: {
+          var tickets = Game._itemCount ? Game._itemCount('switch_ticket') : 0;
+          if (s.mode === MODES.DEMO && s.round === 2) {
+            out.text = '剧本第 2 轮：先点「质疑旁白」识破它，再决定换不换门。';
+            out.choice = 'challenge';
+          } else if (tickets > 0) {
+            out.text = '你有换门券：这轮换门免费。先质疑，再换门。';
+            out.choice = 'switch';
+          } else {
+            out.text = '选：坚持 / 换门 / 质疑旁白 / 加倍 / 收手。';
+          }
+          break;
+        }
+        case STATES.REVEAL:
+          out.text = '开奖中……';
+          break;
+        case STATES.SETTLE_ROUND:
+          out.text = '点「继续下一轮」或「见好就收」。';
+          break;
+        case STATES.CASHOUT:
+        case STATES.GAME_OVER:
+          out.text = '点「再来一局」重开，或「看图鉴」。';
+          break;
+        default:
+          out.text = '';
+      }
+      return out;
+    },
+
     /** 评级（阶段 3 P0）：金币档位 + 高轮次收手加成。 */
     rating: function (state) {
       var cfg = config().ratings;
@@ -1095,7 +1235,7 @@
       var seedValue = demo
         ? ((data && data.seedDemo && data.seedDemo.seed) || root.DEMO_SEED)
         : (seed == null ? (Game.deps.now() >>> 0) : seed);
-      var st = createInitialState(mode, { seed: seedValue, resources: res });
+      var st = createInitialState(mode, { seed: seedValue, resources: res, rehearsal: rehearsalPref });
       st.flags.muted = mutedPref;   // 静音跨重置/切换模式保持（见 mutedPref 注释）
       st.joinedAt = Game.deps.now();
       Game._loadCodexInto(st);
@@ -1133,6 +1273,12 @@
       }
       var res = fn(Game.state, effect, opts) || {};
       Game.state = res.state || Game.state;
+      /* 契约 v3 §4.2：记录本局金币最低点（「绝地翻盘」结局判定）。 */
+      if (Game.state.coins != null) {
+        Game.state.minCoins = (Game.state.minCoins == null)
+          ? Game.state.coins
+          : Math.min(Game.state.minCoins, Game.state.coins);
+      }
       return Game._fuseGuard(res, opts);
     },
 
@@ -1181,6 +1327,8 @@
     },
 
     _playLine: function (line) {
+      /* 契约 v3 §3：播过即解锁（图鉴可达）。 */
+      if (line && line.id) Game._unlockLine(line);
       return Game._play('playNarratorLine', [line, 2]);
     },
 

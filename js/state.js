@@ -74,7 +74,13 @@
     shopBought: {},                  // 即时商品的单局购买计数 { itemId: n }（背包商品看 items）
     itemBuffs: { fuse: false },      // 已激活的本轮道具增益（保险丝等）
     muteCardUsed: false,             // 闭嘴卡待生效：沉默「下一轮」的旁白，narrate 消费后自动清空
-    codex: { items: [], lines: [], endings: [] }
+    codex: { items: [], lines: [], endings: [] },
+
+    /* ---- 契约 v3 追加字段（新玩法 F1-F5） ---- */
+    endingId: null,                  // 本局结局 id（computeEndingId 结果，结算页展示）
+    challengesWon: 0,                // 本局识破次数（累计，不清零）
+    challengesLost: 0,               // 本局质疑失败次数（累计）
+    minCoins: 100                    // 本局金币最低点（“绝地翻盘”结局判定用）
   });
 
   var createInitialState = function createInitialState(mode, opts) {
@@ -107,6 +113,12 @@
       muteCardUsed: false,
       codex: { items: [], lines: [], endings: [] },
 
+      /* ---- 契约 v3 追加字段（新玩法 F1-F5） ---- */
+      endingId: null,
+      challengesWon: 0,
+      challengesLost: 0,
+      minCoins: res.coins,
+
       /* ---- 阶段 2+ 追加字段（默认值即“未触发”） ---- */
       grudge: 0,              // 连续质疑触发的“旁白记仇”层级，每层撒谎率 +20%
       challengeStreak: 0,     // 连续质疑成功次数（彩蛋用）
@@ -116,7 +128,13 @@
       roundResult: null,      // 本轮得失：{ itemId, coins, suspicion, patience, challenged }
       lastChallenge: null,    // 最近一次质疑结果（文案 + 判定）
       joinedAt: 0,            // 开局时间戳（结算页 / 计时用）
-      flags: { skipAnim: false, muted: false, revealLocked: false, speakerMuted: false }
+      flags: {
+        skipAnim: false,
+        muted: false,
+        revealLocked: false,
+        speakerMuted: false,
+        rehearsal: opts.rehearsal === true   // 契约 v3 §5.1：提词器（不写 localStorage，重置后保持）
+      }
     };
   };
 
