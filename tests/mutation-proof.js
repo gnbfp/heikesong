@@ -126,7 +126,7 @@ if (!FAST) {
 
 /* ---------------- 变异 ①b：纯产物漂移（改自由文案，绕过语义校验，直击 --check 的比对逻辑） ------------- */
 console.log('\n— 变异 ①b：只改 data/items.json 的自由文案（数值/效果均不动）、不重建 js/data.js —');
-var t1b = itemsOrig.replace('金币 +30。小甜头，容易让人上头。', '金币 +30。小甜头，容易让人上头。（漂移）');
+var t1b = itemsOrig.replace('金币 +30、怀疑值 +1。甜头也上头。', '金币 +30、怀疑值 +1。甜头也上头。（漂移）');
 var mutated1b = t1b !== itemsOrig;
 fs.writeFileSync(itemsPath, t1b, 'utf8');
 record('变异 ①b 已生效（仅改 desc 文案）', mutated1b, '锚点替换=' + mutated1b);
@@ -196,6 +196,45 @@ fs.writeFileSync(gamePath, gameOrig, 'utf8');
 var shop4b = runNode([path.join(copy, 'tests', 'shop.js')], copy);
 record('复原 ④ 后 shop.js 重新变绿', shop4b.code === 0,
   'exit=' + shop4b.code + '｜' + lineOf(shop4b.out, '小结：'));
+
+/* ---------------- 变异 ⑤：ui.js 去掉 s(换门) 键位映射 → ux.js 键盘断言变红 ---------------- */
+console.log('\n— 变异 ⑤：去掉 js/ui.js 的 s → decide:switch 键位映射（契约 v4 §4.2 键盘） —');
+var anchor5 = "if (low === 's') { if (keyDecide('switch')) e.preventDefault(); return; }";
+var t5 = uiOrig.replace(anchor5, "/* MUTANT：s 键位被删 */");
+var mutated5 = t5 !== uiOrig;
+var uiPath2 = path.join(copy, 'js', 'ui.js');
+fs.writeFileSync(uiPath2, t5, 'utf8');
+record('变异 ⑤ 已生效（s 键位映射被删）', mutated5, '锚点替换=' + mutated5);
+
+var ux5 = runNode([path.join(copy, 'tests', 'ux.js')], copy);
+record('变异 ⑤ ux.js 退出码 ≠ 0 且点名 X4.3', ux5.code !== 0 && /\[FAIL\] X4\.3/.test(ux5.out),
+  'exit=' + ux5.code + '｜' + lineOf(ux5.out, '\\[FAIL\\] X4\\.3') + '｜' + lineOf(ux5.out, '小结：'));
+
+/* ---------------- 复原 ⑤ ---------------- */
+fs.writeFileSync(uiPath2, uiOrig, 'utf8');
+var ux5b = runNode([path.join(copy, 'tests', 'ux.js')], copy);
+record('复原 ⑤ 后 ux.js 的 X4.3 重新变绿', /\[PASS\] X4\.3/.test(ux5b.out),
+  'exit=' + ux5b.code + '｜' + lineOf(ux5b.out, '\\[PASS\\] X4\\.3'));
+
+/* ---------------- 变异 ⑥：js/state.js 改成就存档键名 → ux.js 落盘断言变红 ---------------- */
+console.log('\n— 变异 ⑥：把成就存档键名改成 three_doors_achievements_v2（跨局持久断言） —');
+var statePath = path.join(copy, 'js', 'state.js');
+var stateOrig = fs.readFileSync(statePath, 'utf8');
+var anchor6 = "achievements: 'three_doors_achievements_v1'";
+var t6 = stateOrig.replace(anchor6, "achievements: 'three_doors_achievements_v2'");
+var mutated6 = t6 !== stateOrig;
+fs.writeFileSync(statePath, t6, 'utf8');
+record('变异 ⑥ 已生效（成就键名改成 v2）', mutated6, '锚点替换=' + mutated6);
+
+var ux6 = runNode([path.join(copy, 'tests', 'ux.js')], copy);
+record('变异 ⑥ ux.js 退出码 ≠ 0 且点名 X1.6', ux6.code !== 0 && /\[FAIL\] X1\.6/.test(ux6.out),
+  'exit=' + ux6.code + '｜' + lineOf(ux6.out, '\\[FAIL\\] X1\\.6') + '｜' + lineOf(ux6.out, '小结：'));
+
+/* ---------------- 复原 ⑥ ---------------- */
+fs.writeFileSync(statePath, stateOrig, 'utf8');
+var ux6b = runNode([path.join(copy, 'tests', 'ux.js')], copy);
+record('复原 ⑥ 后 ux.js 的 X1.6 重新变绿', /\[PASS\] X1\.6/.test(ux6b.out),
+  'exit=' + ux6b.code + '｜' + lineOf(ux6b.out, '\\[PASS\\] X1\\.6'));
 
 /* ---------------- 汇总 ---------------- */
 var bad = results.filter(function (r) { return !r.ok; });

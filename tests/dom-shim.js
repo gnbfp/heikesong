@@ -219,12 +219,16 @@ function fire(target, type, extra) {
 /* ------------------------------------------------------------------ localStorage 桩 */
 function makeStorage() {
   var map = Object.create(null);
+  /* _writes 记录每次 setItem/removeItem（断言「只写一次」「写没写某个键」时用；
+     之前没有这个字段，导致 ux.js 的竖屏用例把「实现正常」误判成 FAIL）。 */
+  var writes = [];
   return {
     _map: map,
+    _writes: writes,
     getItem: function (k) { return Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null; },
-    setItem: function (k, v) { map[k] = String(v); },
-    removeItem: function (k) { delete map[k]; },
-    clear: function () { Object.keys(map).forEach(function (k) { delete map[k]; }); },
+    setItem: function (k, v) { map[k] = String(v); writes.push({ key: String(k), value: String(v), op: 'set' }); },
+    removeItem: function (k) { delete map[k]; writes.push({ key: String(k), value: null, op: 'remove' }); },
+    clear: function () { Object.keys(map).forEach(function (k) { delete map[k]; }); writes.push({ key: null, value: null, op: 'clear' }); },
     key: function (i) { var ks = Object.keys(map); return i < ks.length ? ks[i] : null; },
     get length() { return Object.keys(map).length; }
   };
