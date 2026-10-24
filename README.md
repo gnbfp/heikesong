@@ -68,7 +68,7 @@ node tests/run-all.js             # 全量自测：产物一致性、逻辑、�
 node tests/mutation-proof.js      # 变异自证：故意改坏数据/逻辑，确认自测真的会红（在 %TEMP% 副本里跑，本仓库只读）
 ```
 
-`tests/run-all.js` 默认第一项就是 `tools/build-data.js --check`（防「改了 `data/*.json` 忘了重建 `js/data.js`」的假绿）；`STRICT=1 node tests/run-all.js` 会把 SKIP 视为失败（最终验收用）。浏览器端到端用例（`tests/headless-check.js`）在无法启动浏览器的环境里会 SKIP，并在汇总表里逐条点名。
+`tests/run-all.js` 默认第一项就是 `tools/build-data.js --check`（防「改了 `data/*.json` 忘了重建 `js/data.js`」的假绿）；`STRICT=1 node tests/run-all.js` 会把 SKIP 视为失败（最终验收用）。浏览器端到端用例（`tests/headless-check.js`）在无法启动浏览器的环境里会 SKIP，并在汇总表里逐条点名。仓库用 `.gitattributes` 把文本文件固定为 LF，且 `--check` 比较前会归一化换行，所以 Windows 上 `core.autocrlf=true` 不会让 `run-all` 假失败（换行差异不判为产物漂移，数值/文案漂移照旧判失败）。
 
 演示前 30 分钟的手工自测步骤、固定剧本的三轮预期结果与备用方案见 [现场自测清单](docs/现场自测清单.md)。
 

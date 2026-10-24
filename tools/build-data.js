@@ -403,7 +403,11 @@ if (GameData.ratingFor(150, 4, { cashout: true }).title !== '普通赌徒') fail
 if (process.argv.indexOf('--check') >= 0) {
   var current = '';
   try { current = fs.readFileSync(OUT_FILE, 'utf8'); } catch (e) { /* 缺失即视为不一致 */ }
-  if (current !== code) {
+  /* 换行归一化后再比：生成物本身固定 LF（见上文「只统一换行为 LF」），
+     但检出到磁盘时 Windows 的 core.autocrlf / gitattributes 可能把它变成 CRLF，
+     那是同一份内容的表示差异，不该判为「产物漂移」。真漂移（数值/文案变了）仍会被抓到。 */
+  var lf = function (s) { return String(s).replace(/\r\n/g, '\n'); };
+  if (lf(current) !== lf(code)) {
     console.error('[build-data] --check 失败：js/data.js 与 data/*.json 不一致（需重新执行 node tools/build-data.js）');
     process.exit(1);
   }
