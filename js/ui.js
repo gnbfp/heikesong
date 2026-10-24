@@ -110,6 +110,88 @@
     return null;
   }
 
+  /* ------------------------------------------------------- 音效层（合成） */
+  /* 零音频文件：全部用 WebAudio 现场合成，断网/双击 file:// 均可发声。
+     三层保险：① 惰性创建 AudioContext（首次用户手势之后，满足自动播放策略）；
+     ② 全部 try/catch，无 AudioContext 的环境（Node 垫片/老浏览器）静默降级；
+     ③ muted 为真时一条发声路径都不走（setControls 还会顺带 suspend 已建上下文）。 */
+  var AC_CTOR = root.AudioContext || root.webkitAudioContext || null;
+  var ac = null;
+  var acFailed = false;
+  var GESTURE = ['pointerdown', 'keydown', 'touchstart'];
+
+  /** 已静音？只读 state.flags.muted。 */
+  function audioMuted() {
+    var s = liveState();
+    return !!(s && s.flags && s.flags.muted);
+  }
+
+  /** 惰性创建 / 恢复 AudioContext；创建失败则永久降级为无操作。 */
+  function armAudio() {
+    if (!AC_CTOR || acFailed) return null;
+    try {
+      if (!ac) ac = new AC_CTOR();
+      if (ac.state === 'suspended' && ac.resume) {
+        var p = ac.resume();
+        if (p && p.catch) p.catch(function () {});
+      }
+      return ac;
+    } catch (e) {
+      acFailed = true;
+      ac = null;
+      logErr('audioContext', e);
+      return null;
+    }
+  }
+
+  /** 一个音符：type 波形、at 相对现在（秒）、freq 频率、dur 时长、gain 峰值。 */
+  function tone(ctx, type, at, freq, dur, gain) {
+    var t0 = ctx.currentTime + at;
+    var osc = ctx.createOscillator();
+    var amp = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    amp.gain.setValueAtTime(0.0001, t0);
+    amp.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
+    amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(amp);
+    amp.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  /** 音效总线：kind ∈ 'click' | 'open' | 'win' | 'lose'；总时长 ≤0.3s，gain ≤0.045。 */
+  function sfx(kind) {
+    if (audioMuted()) return;                       /* 静音：不发一个采样 */
+    var ctx = armAudio();
+    if (!ctx) return;                               /* 无 WebAudio：静默无操作 */
+    try {
+      if (kind === 'win') {
+        tone(ctx, 'triangle', 0, 660, 0.12, 0.045);
+        tone(ctx, 'triangle', 0.1, 990, 0.16, 0.04);
+      } else if (kind === 'lose') {
+        tone(ctx, 'sawtooth', 0, 300, 0.13, 0.04);
+        tone(ctx, 'sawtooth', 0.09, 190, 0.18, 0.035);
+      } else if (kind === 'open') {
+        tone(ctx, 'square', 0, 240, 0.07, 0.03);
+        tone(ctx, 'square', 0.05, 340, 0.09, 0.026);
+      } else {
+        tone(ctx, 'sine', 0, 520, 0.06, 0.028);
+      }
+    } catch (e) { logErr('sfx ' + str(kind), e); }
+  }
+
+  /** 静音开关同步到已建上下文（幂等；未建上下文时什么都不做）。 */
+  function applyMuteState(muted) {
+    if (!ac) return;
+    try {
+      /* 已是目标状态就不重复调用（.state 缺失的老实现则每次都同步一次）。 */
+      if (ac.state && muted === (ac.state === 'suspended')) return;
+      var p = muted ? (ac.suspend && ac.suspend()) : (ac.resume && ac.resume());
+      if (p && p.catch) p.catch(function () {});
+    } catch (e) { /* 静默 */ }
+  }
+
   /* ------------------------------------------------------------ 运行时状态 */
   /** 只读取当前状态（优先 Game.state），绝不写。 */
   function liveState() { return (gameRef && gameRef.state) || lastState || {}; }
@@ -440,7 +522,7 @@
       case 'ROUND_INTRO': return '第 ' + round + ' 轮 —— 准备开始。';
       case 'NARRATOR': return '旁白正在说话。记住：它说的每一句都可能是谎。';
       case 'PICK': return '点击一扇门做出选择 · 长按 0.4 秒可窥视' + (state && state.peekUsed ? '（本轮已用过）' : '（每轮一次）');
-      case 'HOST_OPEN': return '主持人正在打开一扇空门……';
+      case 'HOST_OPEN': return '主持人正在打开一扇门……';
       case 'DECIDE':
         return num(state && state.suspicion, 0) < suspicionCost()
           ? '怀疑值不足，无法质疑旁白（需要 ' + suspicionCost() + ' 点）。'
@@ -471,6 +553,7 @@
       var slot = num(el.getAttribute('data-slot'), -1);
       if (press.fired && press.slot === slot) { press.fired = false; return; }   /* 长按已处理，吞掉尾随 click */
       if (!canPick()) return;
+      sfx('click');
       armLock('pick', CLICK_LOCK_MS);
       emit({ type: 'pick', slot: slot });
     });
@@ -488,6 +571,7 @@
         if (!canPick()) return;
         press.fired = true;
         later(900, function () { press.fired = false; });   /* 防止吞掉后续无关点击 */
+        sfx('open');
         var de = doorEl(slot);
         if (de) {
           de.classList.add('is-peeking');
@@ -511,8 +595,9 @@
       var btn = closest(e.target, '.decide-btn');
       if (!btn || !D.decide.contains(btn)) return;
       if (btn.disabled || btn.getAttribute('data-hard') === 'true') return;
-      if (btn.getAttribute('aria-disabled') === 'true') { UI.toast(btn.getAttribute('data-hint') || '该决策当前不可用'); return; }
+      if (btn.getAttribute('aria-disabled') === 'true') { sfx('click'); UI.toast(btn.getAttribute('data-hint') || '该决策当前不可用'); return; }
       if (!canDecide()) return;
+      sfx('click');
       armLock('decide', CLICK_LOCK_MS);
       emit({ type: 'decide', choice: btn.getAttribute('data-choice') });
     });
@@ -526,17 +611,28 @@
     ];
     for (var i = 0; i < ctrl.length; i++) {
       (function (pair) {
-        on(pair[0], 'click', function () { emit({ type: pair[1] }); });
+        on(pair[0], 'click', function () {
+          var act = pair[1];
+          if (act === 'toggle_mute') {
+            /* 先切状态再发声：静音瞬间不响，解除静音有轻点反馈 */
+            emit({ type: act });
+            sfx('click');
+            return;
+          }
+          sfx('click');
+          emit({ type: act });
+        });
       })(ctrl[i]);
     }
 
     /* --- 开始 / 遮罩 --- */
-    on(D.btnStart, 'click', function () { emit({ type: 'start', mode: 'demo' }); });
-    on(D.btnStartNormal, 'click', function () { emit({ type: 'start', mode: 'normal' }); });
+    on(D.btnStart, 'click', function () { sfx('click'); emit({ type: 'start', mode: 'demo' }); });
+    on(D.btnStartNormal, 'click', function () { sfx('click'); emit({ type: 'start', mode: 'normal' }); });
 
     /* --- 旁白跳过：先补完本句，再交给状态机（game._skipLine 还会调 UI.skip） --- */
     on(D.narratorSkip, 'click', function () {
       var list = activeAnims.slice();
+      sfx('click');
       emit({ type: 'skip_line' });
       for (var k = 0; k < list.length; k++) { if (list[k].name === 'narrator') list[k].finish(); }
     });
@@ -557,6 +653,11 @@
         else if (!e.shiftKey && doc.activeElement === lastEl) { e.preventDefault(); first.focus(); }
       }
     });
+
+    /* --- 音频手势解锁：AudioContext 必须在首次用户手势之后创建 --- */
+    for (var gi = 0; gi < GESTURE.length; gi++) {
+      on(doc, GESTURE[gi], function () { armAudio(); }, { once: true });
+    }
 
     bound = true;
     cacheDecideButtons();
@@ -772,6 +873,7 @@
         if (a.hint) btn.title = str(a.hint);
         on(btn, 'click', function (ev) {
           if (ev.preventDefault) ev.preventDefault();
+          sfx('click');
           var before = modalEpoch;
           emit({ type: 'modal_choice', choice: btn.getAttribute('data-choice') });
           /* game 在同一次 action 里换/关了弹层就不再插手；它自己会调 closeModal */
@@ -784,6 +886,8 @@
     D.modal.hidden = false;
     toggle(D.modal, 'is-open', true);
     toggle(D.body, 'has-modal', true);
+    var kind = str(spec.kind);
+    sfx(kind === 'gameover' ? 'lose' : (kind === 'cashout' ? 'win' : 'click'));
     var first = D.modalActions.querySelector ? D.modalActions.querySelector('button') : null;
     if (first && first.focus) { try { first.focus(); } catch (e) { /* noop */ } }
   };
@@ -849,7 +953,7 @@
     return a.promise;
   };
 
-  /** 主持人打开一扇空门；返回 Promise<void>。无门可开（slot == null）时直接返回。 */
+  /** 主持人打开一扇门（可能是坏门——剧本会故意制造反差）；返回 Promise<void>。无门可开（slot == null）时直接返回。 */
   UI.playHostOpen = function (slot, itemId) {
     var p = (slot && typeof slot === 'object') ? slot : { slot: slot, itemId: itemId };
     if (p.slot == null || num(p.slot, -1) < 0) return Promise.resolve();
@@ -869,6 +973,7 @@
       UI.banner(msg, 1800);
     }
 
+    sfx('open');                         /* 开门轻点：跳过动画时也响（时长 0.16s，不拖节奏） */
     if (skipAnimOn()) { applyFinal(); return Promise.resolve(); }
 
     var a = beginAnim('hostOpen', applyFinal);
@@ -903,6 +1008,11 @@
     if (mult > 1) line += '（×' + mult + ' 加倍）';
     var applied = false;
 
+    /* 开奖音效分类：净赚 → 上行两音；被坑（净亏 / 炸弹 / 陷阱）→ 下行音；其余（空门、道具）→ 中性轻点 */
+    var netCoins = Math.round(num(deltas.coins, 0));
+    var badItem = str(p.itemId) === 'bomb' || str(p.itemId) === 'trap';
+    var outcome = netCoins > 0 ? 'win' : ((netCoins < 0 || badItem) ? 'lose' : 'click');
+
     function applyDeltas() {
       if (applied) return;
       applied = true;
@@ -924,6 +1034,7 @@
         revealFace();
         el.__sig = null;
       }
+      sfx(outcome);
       applyDeltas();
       UI.banner(line, mult > 1 ? 2100 : 1700);
       if (dt) UI.toast(line);
@@ -989,6 +1100,7 @@
       D.btnMute.title = muted ? '当前已静音 · 点击开启声音' : '当前有声 · 点击静音';
       toggle(D.btnMute, 'is-on', muted);
     }
+    applyMuteState(muted);      /* 幂等：上下文已建则同步 suspend/resume，未建则什么都不做 */
     if (D.btnSkip) {
       text(D.btnSkip, skipAnim ? '动画跳过：开' : '跳过动画');
       D.btnSkip.setAttribute('aria-pressed', skipAnim ? 'true' : 'false');

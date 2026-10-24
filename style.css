@@ -201,9 +201,10 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   display: grid;
   grid-template-columns: repeat(3, minmax(0, min(26vw, 250px)));
   justify-content: center;
-  align-items: stretch;
+  align-items: center;              /* 由 stretch 改为 center：门卡被高度上限夹住时仍垂直居中 */
   gap: clamp(10px, 2vw, 34px);
   min-height: 0;
+  max-height: 100%;                 /* 显式上限：门区永不高于所在轨道 */
 }
 
 .door {
@@ -213,6 +214,16 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   align-items: center;
   justify-content: center;
   gap: .35em;
+  width: 100%;
+  height: 100%;
+  /* 门卡显式高度上限（P1）：取三者最小值
+     ① 100% —— 所在轨道高度（正常 16:9 下就是这一项生效，门卡高度与改前完全一致）；
+     ② 104vw —— 自身门宽的 4 倍（列宽 = min(26vw, 250px) ⇒ 4 倍 = min(104vw, 1000px)），
+        保证极窄竖屏下门卡不会拉成细长条；
+     ③ 1000px —— 与 250px 列宽配套的绝对上限。
+     七档验算（见 task-9 报告）里 ①②③ 的第 ① 项恒为最小值 ⇒ 1280×720 / 1920×1080
+     两档的盒子尺寸、观感、信息完整度与改前逐像素相同。 */
+  max-height: min(100%, 104vw, 1000px);
   min-height: 0;
   padding: clamp(8px, 1.6vh, 20px);
   overflow: hidden;
@@ -695,4 +706,27 @@ body[data-state="REVEAL"] #stage { animation: stageGlow .9s ease; }
   #topbar { flex-wrap: wrap; }
   #controls { width: 100%; justify-content: flex-end; }
   .decision, #decide { font-size: var(--fs-xs); }
+}
+
+/* ------------------------------------------------- 矮视口（≤560px 高） */
+/* 667×375 / 640×360 这类视口：先把周边（顶栏/旁白/HUD/决策区/舞台）的 padding
+   收紧，再让门卡内部（图标 / 门号 / 名称 / 标签）整体收缩 —— 是「变小」而不是「被裁」。
+   门槛 560px 低于演示机 720p/1080p，故演示分辨率下本块完全不生效。 */
+@media (max-height: 560px) {
+  #topbar { padding: 4px clamp(10px, 1.4vw, 20px); }
+  #narrator { padding: 4px clamp(10px, 1.4vw, 18px); }
+  .narrator-avatar { width: clamp(24px, 4.6vh, 46px); height: clamp(24px, 4.6vh, 46px); }
+  .hud-item { padding: 3px clamp(8px, 1.2vw, 16px); }
+  #decide { padding: 4px; }
+  .decide-btn { padding: 4px .4em; }
+  #stage { padding: 4px 0; }
+  .banner { padding: .25em .9em; }
+  .hint { padding: .2em .8em; }
+  #footer { letter-spacing: .02em; }
+
+  .door { padding: 6px; gap: .16em; }
+  .door-no { top: 4px; left: 6px; letter-spacing: .1em; }
+  .door-icon { font-size: clamp(14px, 4.2vh, 34px); }
+  .door-name { font-size: var(--fs-sm); }
+  .door-tag { min-height: 0; line-height: 1.2; letter-spacing: .04em; }
 }
