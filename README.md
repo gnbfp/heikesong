@@ -1,4 +1,4 @@
-﻿# 三扇门：别信旁白
+# 三扇门：别信旁白
 
 创意互动与娱乐赛道 · 黑客松 Demo。零构建纯静态网页：**双击 `index.html` 即可运行**（也支持任意静态服务器），断网可用，无后端、无登录、无任何外部接口。
 
@@ -49,6 +49,11 @@ docs/                 协作说明、回滚说明、现场自测清单、商店�
 | 商店（右上角） | **决策阶段 / 本轮结算页**可开，金币买道具；买了自动进背包 |
 | 背包 | 有道具时显示在舞台下方；点道具使用（仅决策阶段可点） |
 | 提词器 | 地址后加 `?rehearsal=1`（或 `#rehearsal=1`）开启，右下角常驻提示「下一步该做什么」，演示时给自己看 |
+| 键盘 | `1`/`2`/`3` 选门；`Q` 质疑、`D` 加倍、`S` 换门、`C` 收手；`M` 静音、`?`/`H` 规则、`,`/`.` 设置；弹层内 `空格`/`Enter` = 主按钮、`Esc` 关闭；输入框聚焦时不抢键 |
+| 规则 / 设置（右上角） | 「规则」看五决策与快捷键；「设置」切旁白人格（毒舌 / 温柔 / 癫狂）、BGM 与音效开关、动画速度三档、清空本机数据 |
+| 新手引导 | 首次进入自动弹 5 步气泡（选门 → 旁白 → 决策 → 商店 → 收手）；跳过或完成后不再出现，按 `?` 随时看规则 |
+| 成就 / 统计 | 10 个成就与单机统计卡都在「看图鉴」里；统计记录局数、累计金币、最佳单局、最高轮次、质疑次数/成功数、结局数 |
+| 种子分享 | 结算页显示 8 位种子并可「复制种子」；`index.html?seed=abc123` 可重放同一局（同种子发牌一致） |
 | 收手 | 在决策阶段或本轮结算页均可，进入结算页 |
 | 右上角 | 重置 / 演示模式切换 / 静音（WebAudio 现场合成，无音频文件；**重置或切换模式后仍保持静音**） / 跳过动画 |
 | 结算页 | 「再来一局」重开一局；「看图鉴」查看收集进度与最佳成绩；结算页还会给出**结局**（如「全识破」「绝地翻盘」「被旁白 PUA」）与对应旁白点评 |
@@ -92,6 +97,23 @@ docs/                 协作说明、回滚说明、现场自测清单、商店�
 
 图鉴弹层里的「清空收集进度」会同时清掉这两个键。存档只存在本机、不上传；隐私模式、配额不足或存档损坏时**静默降级为空图鉴**，不会白屏、不会中断演示。
 
+## 第四轮：体验增强（G1–G8）
+
+更完整、更有意思、更好看、更易上手：新手引导、键盘全操作、三种旁白人格、成就与统计、种子分享、美术升级、竖屏提示。零新增依赖、零外部资源。
+
+| # | 内容 | 涉及文件 | 证据 |
+| --- | --- | --- | --- |
+| G1 | **新手引导**：首局自动 5 步气泡（`选门 → 旁白 → 决策 → 商店 → 收手`），按锚点高亮对应控件，可跳过/完成；`?` 随时重看规则；引导中进入结算相位会自动收尾 | `index.html`、`js/ui.js`、`js/game.js` | `tests/ux.js` 引导组 |
+| G2 | **键盘全操作**：`1/2/3` 选门，`Q` 质疑、`D` 加倍、`S` 换门、`C` 收手、`M` 静音、`?`/`H` 规则、`,`/`.` 设置；弹层 `空格`/`Enter` 主按钮、`Esc` 关闭信息弹层（**必选流程的本轮结算/结算页/结束页不响应 Esc**，必须点按钮，避免关掉后卡在无弹层状态）；与鼠标点击走同一条 action 通道 | `js/ui.js` | `tests/ux.js` 键盘组（X4.7 / X4.7b） |
+| G3 | **旁白人格**：毒舌 / 温柔 / 癫狂三档，撒谎率增量 `0 / −0.05 / +0.05` 并夹在 `config.personalities.lieRateDeltaCap`（0.1）内；每档有独立 intro/flavor/settle 台词池，设置弹层可切、旁白面板与右下徽标显示当前人格 | `data/personas.json`、`js/narrator.js`、`js/ui.js` | `tests/ux.js` 人格组 |
+| G4 | **成就 10 条**：`见好就收 / 五关斩将 / 三百门客 / 三连问 / 全知者 / 剧作人 / 梭哈 / 绝地反击 / 火眼金睛 / 千人千面`，判定类型各一（收手/轮次/金币/质疑连击/语录/结局/加倍/翻盘/零失误/人格），图鉴里以成就墙展示 | `data/achievements.json`、`js/game.js`、`js/ui.js` | `tests/ux.js` 成就组 |
+| G5 | **统计档案**：`three_doors_stats_v1` 记录局数、累计金币、最佳单局、最高轮次、质疑次数/成功数、解锁结局数；「看图鉴」里的统计卡展示 | `js/state.js`、`js/game.js`、`js/ui.js` | `tests/ux.js` 统计组 |
+| G6 | **种子分享与重放**：结算页显示 8 位种子、可复制；`?seed=xxxx` 重放同一局（优先于演示模式与 `?rehearsal=1`）；同种子发牌一致 | `js/game.js`、`js/ui.js` | `tests/ux.js` 种子组 |
+| G7 | **美术升级**：幕布 + 聚光灯 + 暗角、门卡浮雕/把手/质感/悬停微倾、标题艺术字、HUD 内联 SVG 图标、开奖彩带（≤1.2s 清理，`prefers-reduced-motion` 下不生成）、按钮质感 —— 纯 CSS + 内联 SVG，无外链 | `style.css`、`js/ui.js` | `tests/ux.js` 结构组 + 对比度/布局静态表 |
+| G8 | **竖屏提示**：视口高 < 400px 时显示「建议横屏体验」浮层，恢复横屏自动隐藏 | `index.html`、`js/ui.js` | `tests/ux.js` 竖屏组 |
+
+同轮顺带：结算弹层新增**旁白点评行**（引擎写 `state.settleLine`，UI 渲染 `.settle-line`，本轮/收手/劝退三种时刻各有专属台词）；`apply_speed` 动作与 `set_pref{animationSpeed}` 等价；设置弹层与规则弹层不再误显示「种子」行。
+
 ## 本地校验
 
 ```powershell
@@ -100,9 +122,10 @@ node tools/build-data.js --check  # 只校验 data/*.json 与 js/data.js 是否�
 node tests/sim.js                 # 无头逻辑 + 清单验收项（175 项）
 node tests/shop.js                # 商店 / 背包 / 经济 / 换门代价（75 项）
 node tests/features.js            # 线索 / 连击 / 怀疑值 / 结局 / 提词器 / 图鉴可达（58 项）
+node tests/ux.js                  # 体验增强：成就 / 统计 / 种子重放 / 键盘 / 人格 / 引导 / 竖屏（73 项）
 node tests/dom-smoke.js           # Node DOM 垫片：页面结构、商店 DOM 契约、六档视口、WCAG 对比度（98 项）
-node tests/run-all.js             # 全量自测，6 个套件：415 PASS / 0 FAIL / 9 SKIP
-node tests/mutation-proof.js      # 变异自证：19/19（故意改坏数据/逻辑，确认自测真的会红）
+node tests/run-all.js             # 全量自测，7 个套件：488 PASS / 0 FAIL / 9 SKIP
+node tests/mutation-proof.js      # 变异自证：25/25（故意改坏数据/逻辑，确认自测真的会红）
 ```
 
 `tests/run-all.js` 默认第一项就是 `tools/build-data.js --check`（防「改了 `data/*.json` 忘了重建 `js/data.js`」的假绿）；`STRICT=1 node tests/run-all.js` 会把 SKIP 视为失败（最终验收用）。浏览器端到端用例（`tests/headless-check.js`）在无法启动浏览器的环境里会 SKIP，并在汇总表里逐条点名。仓库用 `.gitattributes` 把文本文件固定为 LF，且 `--check` 比较前会归一化换行，所以 Windows 上 `core.autocrlf=true` 不会让 `run-all` 假失败（换行差异不判为产物漂移，数值/文案漂移照旧判失败）。
@@ -169,6 +192,14 @@ node tests/mutation-proof.js      # 变异自证：19/19（故意改坏数据/�
 11. **演示三轮的结局与称号不同源**：固定剧本 3 轮、质疑成功 1 次、耐心全程没掉，所以结局是「稳如老狗」（`iron_patience`：`round ≥ 3` 且耐心未下降），称号是「欧皇候选」（250 金币）。称号看金币、结局看打法，两者本来就可以不同；想演「全识破」需要一局内质疑成功 3 次且零失败。
 12. **提词器与 BGM 都是纯前端、零资源**：提词器用 `?rehearsal=1`（或 `#rehearsal=1`）开启，是 `position:fixed` 浮层、`pointer-events:none`，不占布局也不吃点击；BGM 由两个 oscillator 现场合成（按轮次升调 ~100/130/160 Hz，`gain ≤ 0.03`），没有音频文件，静音 / 非对局 / 页面隐藏即停。
 13. **新玩法数值都在配置里**：怀疑值上限 `config.suspicion.max`（3）、连击步长/封顶 `comboStep`/`comboCap`（10/20）、8 种结局的判定与优先级在 `config.endings`，改数值不用改代码，改完跑 `node tools/build-data.js` 重建即可。
+14. **成就阈值以数据为准**：`data/achievements.json` 的 `check.type`（`cashouts/rounds/coins/challengeWins/codexLines/endings/doubles/comeback/clean/personas`）与 `threshold` 是唯一事实来源；`js/game.js` 的 `ACH_CHECK` 同时兼容契约 v4 里的旧类型名（`cashout/combo/all_in/...`），未知类型一律视为「不满足」而不是抛错。
+15. **旁白人格只影响台词与撒谎率**：`lieRateDelta` 叠加后夹在 `±config.personalities.lieRateDeltaCap`（0.1）内；人格不改变状态机、不改变物品权重、不改变主持人的硬不变量。
+16. **结算点评行由引擎写入、UI 渲染**：引擎在「本轮结算 / 收手 / 耐心归零」时把台词写进 `state.settleLine`，`js/ui.js` 的 `settleRow()` 渲染 `.settle-line`（body 里已有同句则跳过）。headless 测试只断言 `state.settleLine` 与弹层 kind，不依赖 DOM。
+17. **`?seed=` 会强制普通模式**：`index.html?seed=xxxx` 优先于 `?rehearsal=1` 与演示模式，用于「重放刚才那一局」；演示模式想复现固定剧本请不带 `?seed=`。
+18. **首帧渲染与真机目检**：G7 的视觉升级（幕布 / 聚光灯 / 浮雕门卡 / 彩带）全部是静态 CSS + 内联 SVG + 运行时合成，没有音频或图片文件；与第 3 条相同，沙箱无法启动浏览器，**真机观感需要人工按 [现场自测清单](docs/现场自测清单.md) 第 13 节看一遍**。
+19. **Esc 不关必选流程弹层**：本轮结算（`round`）/ 结算页（`cashout`）/ 结束页（`gameover`）三种弹层必须点按钮才能离开；按 Esc 会被忽略（契约 §4.2 注）。原因：这些弹层一旦被关掉、而相位仍停在 `SETTLE_ROUND / CASHOUT / GAME_OVER`，玩家会卡在「无弹层可操作」的死状态。信息弹层（规则 / 设置 / 图鉴 / 商店）一律可用 Esc 关闭；`Game.openHelp/openSettings` 也会拒绝覆盖这些必选弹层（只弹 toast）。
+20. **新手引导是 5 步，不是契约初稿的 3 步**：`Game.tutorialSteps()` 返回 5 步（`tut_door/tut_narrator/tut_decide/tut_challenge/tut_cashout`），每步带 `id/title/text/anchor`，anchor 覆盖 `doors/decide/cashout`；契约 §2.3 已按实测回写。步数多不是缺陷，是「把商店/收手也说清楚」的取舍。
+21. **测试基线数字**：`node tests/run-all.js` = 7 套件 **488 PASS / 0 FAIL / 9 SKIP**（`build-data --check` 独立一项、sim 175、shop 75、features 58、ux 73、dom-smoke 98、headless 9 PASS + 9 SKIP）；`STRICT=1` 会把 9 条 SKIP 判失败（全部是 headless-check 的 Edge 启动项）。`tests/ux.js` 的「只提示一次」断言依赖 `tests/dom-shim.js` 的 localStorage 桩记录 `_writes`（本轮给 `makeStorage()` 补上）。
 
 ## 开发约定
 
