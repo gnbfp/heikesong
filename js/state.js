@@ -80,7 +80,21 @@
     endingId: null,                  // 本局结局 id（computeEndingId 结果，结算页展示）
     challengesWon: 0,                // 本局识破次数（累计，不清零）
     challengesLost: 0,               // 本局质疑失败次数（累计）
-    minCoins: 100                    // 本局金币最低点（“绝地翻盘”结局判定用）
+    minCoins: 100,                   // 本局金币最低点（“绝地翻盘”结局判定用）
+
+    /* ---- 契约 v4 追加字段（体验增强 G1-G8） ---- */
+    personality: 'sarcastic',        // 旁白人格：'sarcastic' | 'gentle' | 'crazy'
+    seedTag: null,                   // 本局种子标签（结算页展示 / 分享）
+    achievements: [],                // 已解锁成就 id 列表（跨局持久）
+    stats: null,                     // 统计档案对象（跨局持久，见 CodexStore.loadStats）
+    flags: {
+      skipAnim: false,
+      muted: false,
+      revealLocked: false,
+      speakerMuted: false,
+      onboarded: false,              // 新手引导是否已完成
+      portraitWarned: false          // 竖屏降级提示是否已触发过
+    }
   });
 
   var createInitialState = function createInitialState(mode, opts) {
@@ -119,6 +133,12 @@
       challengesLost: 0,
       minCoins: res.coins,
 
+      /* ---- 契约 v4 追加字段（体验增强 G1-G8） ---- */
+      personality: 'sarcastic',
+      seedTag: null,
+      achievements: [],
+      stats: null,
+
       /* ---- 阶段 2+ 追加字段（默认值即“未触发”） ---- */
       grudge: 0,              // 连续质疑触发的“旁白记仇”层级，每层撒谎率 +20%
       challengeStreak: 0,     // 连续质疑成功次数（彩蛋用）
@@ -133,7 +153,9 @@
         muted: false,
         revealLocked: false,
         speakerMuted: false,
-        rehearsal: opts.rehearsal === true   // 契约 v3 §5.1：提词器（不写 localStorage，重置后保持）
+        rehearsal: opts.rehearsal === true,  // 契约 v3 §5.1：提词器（不写 localStorage，重置后保持）
+        onboarded: false,
+        portraitWarned: false
       }
     };
   };
@@ -252,7 +274,10 @@
    */
   var STORE_KEYS = Object.freeze({
     codex: 'three_doors_codex_v1',
-    best: 'three_doors_best_v1'
+    best: 'three_doors_best_v1',
+    stats: 'three_doors_stats_v1',
+    achievements: 'three_doors_achievements_v1',
+    prefs: 'three_doors_prefs_v1'
   });
 
   function arr(v) { return Object.prototype.toString.call(v) === '[object Array]' ? v : []; }
@@ -318,8 +343,79 @@
       });
     },
     clearBest: function () { return drop(STORE_KEYS.best); },
-    /** 清空收集进度（图鉴 + 最佳成绩）。 */
-    clearAll: function () { var a = CodexStore.clearCodex(); var b = CodexStore.clearBest(); return a || b; }
+
+    /* ---- 契约 v4：统计档案 / 成就 / 偏好设置（同样静默降级） ---- */
+    /** 读统计档案；失败/缺失 → 全 0。 */
+    loadStats: function () {
+      var s = readJson(STORE_KEYS.stats, {});
+      return {
+        games: Number(s.games) || 0,
+        totalCoins: Number(s.totalCoins) || 0,
+        bestCoins: Number(s.bestCoins) || 0,
+        bestRound: Number(s.bestRound) || 0,
+        challenges: Number(s.challenges) || 0,
+        challengeWins: Number(s.challengeWins) || 0,
+        endings: arr(s.endings).slice()
+      };
+    },
+    saveStats: function (stats) {
+      if (!stats) return false;
+      return writeJson(STORE_KEYS.stats, {
+        games: Number(stats.games) || 0,
+        totalCoins: Number(stats.totalCoins) || 0,
+        bestCoins: Number(stats.bestCoins) || 0,
+        bestRound: Number(stats.bestRound) || 0,
+        challenges: Number(stats.challenges) || 0,
+        challengeWins: Number(stats.challengeWins) || 0,
+        endings: arr(stats.endings)
+      });
+    },
+    clearStats: function () { return drop(STORE_KEYS.stats); },
+    /** 读已解锁成就 id 列表；失败 → []。 */
+    loadAchievements: function () {
+      var a = readJson(STORE_KEYS.achievements, {});
+      return arr(a.ids || a).filter(function (x) { return typeof x === 'string'; }).slice();
+    },
+    saveAchievements: function (list) {
+      return writeJson(STORE_KEYS.achievements, { ids: arr(list) });
+    },
+    clearAchievements: function () { return drop(STORE_KEYS.achievements); },
+    /** 读偏好设置；失败 → 默认值。 */
+    loadPrefs: function () {
+      var p = readJson(STORE_KEYS.prefs, {});
+      return {
+        onboarded: p.onboarded === true,
+        muted: p.muted === true,
+        persona: typeof p.persona === 'string' ? p.persona : 'sarcastic',
+        animationSpeed: typeof p.animationSpeed === 'string' ? p.animationSpeed : 'full',
+        bgm: p.bgm !== false,
+        sound: p.sound !== false,
+        portraitWarned: p.portraitWarned === true,
+        personasSeen: arr(p.personasSeen).slice()
+      };
+    },
+    savePrefs: function (prefs) {
+      if (!prefs) return false;
+      return writeJson(STORE_KEYS.prefs, {
+        onboarded: prefs.onboarded === true,
+        muted: prefs.muted === true,
+        persona: typeof prefs.persona === 'string' ? prefs.persona : 'sarcastic',
+        animationSpeed: typeof prefs.animationSpeed === 'string' ? prefs.animationSpeed : 'full',
+        bgm: prefs.bgm !== false,
+        sound: prefs.sound !== false,
+        portraitWarned: prefs.portraitWarned === true,
+        personasSeen: arr(prefs.personasSeen)
+      });
+    },
+    clearPrefs: function () { return drop(STORE_KEYS.prefs); },
+    /** 清空收集进度（图鉴 + 最佳成绩 + 统计 + 成就 + 偏好）。 */
+    clearAll: function () {
+      var ok = false;
+      [STORE_KEYS.codex, STORE_KEYS.best, STORE_KEYS.stats, STORE_KEYS.achievements, STORE_KEYS.prefs].forEach(function (k) {
+        if (drop(k)) ok = true;
+      });
+      return ok;
+    }
   };
 
   root.CodexStore = CodexStore;

@@ -55,6 +55,9 @@
   /** 契约 v3 §5.1：演示提词器开关（?rehearsal=1 或 #rehearsal），本进程内记忆、跨重置保持。 */
   var rehearsalPref = false;
 
+  /** 契约 v4 §6：?seed=xxx 指定的重放种子（本进程内记忆）。 */
+  var seedPref = null;
+
   /** 读 URL 里的提词器开关；deps.location 可注入（测试用）。 */
   function rehearsalFromUrl(opts, deps) {
     if (opts && opts.rehearsal === true) return true;
@@ -168,6 +171,147 @@
     return isFinite(c) && c > 0 ? c : 5;
   }
 
+  /* ------------------------------------------- 契约 v4：人格 / 成就 / 统计 / 种子 */
+
+  var PERSONA_IDS = ['sarcastic', 'gentle', 'crazy'];
+
+  var DEFAULT_PERSONAS = [
+    { id: 'sarcastic', name: '毒舌旁白', icon: '😏', desc: '阴阳怪气，句句带刺。', lieRateDelta: 0 },
+    { id: 'gentle', name: '温柔旁白', icon: '🙂', desc: '轻声细语，但也不一定靠谱。', lieRateDelta: -0.05 },
+    { id: 'crazy', name: '癫狂旁白', icon: '🤪', desc: '神经兮兮，语速都比别人快。', lieRateDelta: 0.05 }
+  ];
+
+  var DEFAULT_ACHIEVEMENTS = [
+    { id: 'first_cashout', name: '见好就收', icon: '💰', desc: '第一次主动收手，把钱装进口袋就走。', check: { type: 'cashouts', threshold: 1 } },
+    { id: 'rounds5', name: '五关斩将', icon: '🖐️', desc: '一局活到第 5 轮还没倒下。', check: { type: 'rounds', threshold: 5 } },
+    { id: 'coins300', name: '三百门客', icon: '🪙', desc: '单局金币达到 300。', check: { type: 'coins', threshold: 300 } },
+    { id: 'combo3', name: '三连问', icon: '🔥', desc: '连续 3 次质疑成功。', check: { type: 'challengeWins', threshold: 3 } },
+    { id: 'codex24', name: '全知者', icon: '📖', desc: '解锁 24 句旁白语录。', check: { type: 'codexLines', threshold: 24 } },
+    { id: 'endings4', name: '剧作人', icon: '🎭', desc: '解锁 4 个结局。', check: { type: 'endings', threshold: 4 } },
+    { id: 'all_in', name: '梭哈', icon: '🎲', desc: '同一局里加倍 3 次。', check: { type: 'doubles', threshold: 3 } },
+    { id: 'comeback', name: '绝地反击', icon: '📈', desc: '金币探到 20 以下后回到 200。', check: { type: 'comeback', threshold: 200 } },
+    { id: 'clean_run', name: '火眼金睛', icon: '✅', desc: '闯到第 5 轮且从未质疑失败。', check: { type: 'clean', threshold: 1 } },
+    { id: 'persona3', name: '千人千面', icon: '🎭', desc: '体验过三种旁白人格。', check: { type: 'personas', threshold: 3 } }
+  ];
+
+  /**
+   * 成就判定器：既支持契约 v4 §3.2 的旧名（cashout/combo/all_in/...），
+   * 也支持数据层实际使用的 type（cashouts/challengeWins/doubles/...），
+   * 未知类型一律视为不满足（不抛错）。
+   */
+  var ACH_CHECK = {
+    /* 收手类 */
+    cashout: function (s) { return !!(s && s.ending); },
+    cashouts: function (s, th) { return !!(s && s.ending) || ((Game.stats() || {}).games || 0) >= (th || 1); },
+    /* 轮次 */
+    rounds: function (s, th) { return (s.round || 0) >= (th || 1); },
+    /* 金币 */
+    coins: function (s, th) { return (s.coins || 0) >= (th || 1); },
+    /* 质疑连击 */
+    combo: function (s, th) { return (s.challengeStreak || 0) >= (th || 1); },
+    challengeWins: function (s, th) { return (s.challengesWon || 0) >= (th || 1); },
+    /* 图鉴 */
+    codex: function (s, th) { return ((s.codex && s.codex.lines) || []).length >= (th || 1); },
+    codexLines: function (s, th) { return ((s.codex && s.codex.lines) || []).length >= (th || 1); },
+    endings: function (s, th) { return ((s.codex && s.codex.endings) || []).length >= (th || 1); },
+    /* 加倍 */
+    all_in: function (s) { return !!(s && s.allInWin); },
+    doubles: function (s, th) { return (s.doublesUsed || 0) >= (th || 1); },
+    /* 翻盘 */
+    comeback: function (s, th) { return (s.minCoins != null) && s.minCoins <= 20 && (s.coins || 0) >= (th || 200); },
+    /* 零失误 */
+    clean_run: function (s) { return (s.round || 0) >= 5 && !(s.challengesLost > 0); },
+    clean: function (s, th) { return (s.round || 0) >= 5 && !(s.challengesLost > 0); },
+    /* 人格 */
+    persona: function (s, th) { return (Game.personaSeen() || []).length >= (th || 1); },
+    personas: function (s, th) { return (Game.personaSeen() || []).length >= (th || 1); }
+  };
+
+  /** 人格表：优先 GameData.personas（数组或按 id 映射），否则兜底。 */
+  function personaTable() {
+    var list = Game.deps && Game.deps.data && Game.deps.data.personas;
+    if (Array.isArray(list) && list.length) return list;
+    var byId = Game.deps && Game.deps.data && Game.deps.data.personasById;
+    if (byId && typeof byId === 'object') {
+      var out = [];
+      for (var k in byId) if (Object.prototype.hasOwnProperty.call(byId, k)) out.push(byId[k]);
+      if (out.length) return out;
+    }
+    return DEFAULT_PERSONAS;
+  }
+  function personaOf(id) {
+    var list = personaTable();
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i];
+    return null;
+  }
+  function achievementTable() {
+    var list = Game.deps && Game.deps.data && Game.deps.data.achievements;
+    return (Array.isArray(list) && list.length) ? list : DEFAULT_ACHIEVEMENTS;
+  }
+  function achievementById(id) {
+    var list = achievementTable();
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i];
+    return null;
+  }
+
+  /** 偏好设置（本机持久，静默降级）。 */
+  var PREFS_DEFAULT = {
+    onboarded: false, muted: false, persona: 'sarcastic',
+    animationSpeed: 'full', bgm: true, sound: true
+  };
+  function prefsOf() {
+    var store = Game._store && Game._store();
+    if (store && typeof store.loadPrefs === 'function') {
+      try {
+        var p = store.loadPrefs();
+        if (p) return Object.assign({}, PREFS_DEFAULT, p);
+      } catch (e) { /* 静默 */ }
+    }
+    return Object.assign({}, PREFS_DEFAULT);
+  }
+  /** 必选流程弹层是否开着（信息弹层不得覆盖它，否则关掉就卡住）。 */
+  function blockingModalOpen() {
+    var s = Game.state;
+    if (!s) return false;
+    return s.phase === STATES.SETTLE_ROUND || s.phase === STATES.CASHOUT || s.phase === STATES.GAME_OVER;
+  }
+  function writePrefs(p) {
+    var store = Game._store && Game._store();
+    if (store && typeof store.savePrefs === 'function') {
+      try { store.savePrefs(p); return true; } catch (e) { return false; }
+    }
+    return false;
+  }
+
+  /** 契约 v4 §6：?seed=xxx（十六进制或十进制）优先于演示剧本与提词器。
+   *  注意：只解析 URL，不把 opts.seed 缓存成重放种子——opts.seed 只对本次 init 生效，
+   *  否则一次普通模式的可控种子测试会把后续所有演示开局都拽出剧本（G2.x 回归）。 */
+  function seedFromUrl(opts, deps) {
+    var loc = (deps && deps.location) || root.location || {};
+    var q = String(loc.search || '');
+    var h = String(loc.hash || '');
+    var m = /[?&]seed=([0-9a-zA-Z]{1,12})/.exec(q) || /^#seed=([0-9a-zA-Z]{1,12})/.exec(h);
+    if (!m) return null;
+    var raw = m[1];
+    var v = /^\d+$/.test(raw) ? parseInt(raw, 10) : parseInt(raw, 16);
+    return isFinite(v) ? (v >>> 0) : null;
+  }
+
+  /** 种子标签（8 位十六进制，用于展示 / 分享 / 重放）。 */
+  function seedTagOf(seed) {
+    var n = (seed >>> 0).toString(16);
+    while (n.length < 8) n = '0' + n;
+    return n;
+  }
+
+  /** 当前页面的种子分享链接。 */
+  function seedUrlOf(tag) {
+    var loc = (Game.deps && Game.deps.location) || root.location || {};
+    var base = String(loc.href || 'index.html');
+    base = base.split('#')[0].split('?')[0];
+    return base + '?seed=' + tag;
+  }
+
   /* -------------------------------------------------------------- Game 本体 */
 
   var Game = {
@@ -186,6 +330,7 @@
       Game._timers = [];
       Game._generation = 0;
       rehearsalPref = rehearsalFromUrl(opts, Game.deps);
+      seedPref = seedFromUrl(opts, Game.deps);
       Game.state = Game._freshState(opts.mode || MODES.DEMO, opts.seed);
       var ui = Game._ui();
       if (ui.init) { try { ui.init(Game); } catch (e) { Game._warn('ui.init', e); } }
@@ -292,6 +437,40 @@
 
         case 'use_item':
           return Game.useItem(payload.id).ok;
+
+        /* ---- 契约 v4：体验增强 ---- */
+        case 'set_personality':
+          return Game.setPersonality(payload.id || payload.persona);
+
+        case 'set_pref':
+          return !!Game.savePref(payload.key, payload.value);
+
+        /* 兼容契约 §2.3 的 apply_speed{value}：映射到偏好 animationSpeed。 */
+        case 'apply_speed':
+          return !!Game.savePref('animationSpeed', payload.value);
+
+        case 'save_seed':
+          return Game.saveSeed();
+
+        case 'tutorial_done':
+          Game.savePref('onboarded', true);
+          if (Game.state) Game.state.flags.onboarded = true;
+          return true;
+
+        case 'tutorial_skip':
+          Game.savePref('onboarded', true);
+          if (Game.state) Game.state.flags.onboarded = true;
+          Game._toast('已跳过新手引导，随时按 ? 看规则。');
+          return true;
+
+        case 'open_help':
+          return Game.openHelp();
+
+        case 'open_settings':
+          return Game.openSettings();
+
+        case 'clear_save':
+          return Game.clearSave();
 
         default:
           Game._warn('未知动作', type);
@@ -730,6 +909,8 @@
       s.phase = prevPhase;
       Game.state = s;
       s.doors[slot].revealed = true;
+      /* 契约 v4 §5：孤注一掷成就 —— 加倍后开出大奖。 */
+      if (multiplier === 2 && itemId === 'big_prize') s.allInWin = true;
       Game.setState(STATES.REVEAL);
       Game._flashAll(applied.delta);
 
@@ -797,6 +978,10 @@
       var ui = Game._ui();
       var item = itemOf(result.itemId) || {};
       var delta = Game._deltaText(result);
+      /* 契约 v4 §3.6：结算页旁白点评一句（展示用，不扰动主随机流）。 */
+      var kv = kindOf(result.itemId);
+      var settle = Game._settleLineFor(kv === 'hazard' ? 'lose' : 'win');
+      Game.state.settleLine = (settle && settle.text) ? settle.text : null;
       var body = '<p>你选了 <b>' + (result.pickedSlot + 1) + ' 号门</b>：' +
         (item.name || result.itemId || '什么也没有') + '</p>' +
         '<p>' + delta + '</p>' +
@@ -838,24 +1023,30 @@
       if (narrator && typeof narrator.endingLine === 'function') {
         try { endingLine = narrator.endingLine(s, s.endingId); } catch (e) { endingLine = null; }
       }
+      if (!endingLine) endingLine = Game._settleLineFor('cashout');
+      s.settleLine = (endingLine && endingLine.text) ? endingLine.text : null;
       if (s.codex.endings.indexOf(ending.title) < 0) s.codex.endings.push(ending.title);
       var body = '<p class="big">最终金币：<b>' + s.coins + '</b></p>' +
         '<p>闯到第 <b>' + s.round + '</b> 轮</p>' +
         '<p>称号：<b>' + rating.title + '</b></p>' +
         '<p>结局：<b>' + ending.title + '</b>' + (ending.desc ? '（' + ending.desc + '）' : '') + '</p>' +
-        (endingLine && endingLine.text ? '<p class="muted">旁白：「' + endingLine.text + '」</p>' : '') +
         (s.spentCoins > 0
           ? '<p class="muted">你在商店花了 <b>' + s.spentCoins + '</b> 金币，买了 ' + (s.shopBuys || 0) + ' 件道具。</p>'
           : '') +
         (highlight ? '<p class="muted">' + highlight + '</p>' : '') +
+        '<p class="muted">种子：<b>' + Game.seedTag() + '</b>（点「复制种子」可重放这一局）</p>' +
         '<p class="fine">游戏内金币纯属娱乐，非真实货币。</p>';
       Game._saveCodex();
       Game._saveBest();
+      /* 契约 v4 §5：局终写统计 + 判定成就。 */
+      Game._finishStats();
+      Game._checkAchievements();
       var ui = Game._ui();
       Game._endingModal = {
         kind: 'cashout', title: '本局结算', body: body, ending: ending,
         actions: [
           { label: '再来一局', choice: 'restart', primary: true },
+          { label: '复制种子', choice: 'save_seed' },
           { label: '看图鉴', choice: 'codex' }
         ]
       };
@@ -877,17 +1068,23 @@
       s.endingId = Game.computeEndingId(s);
       var ending = Game.endingSpec(s.endingId);
       if (s.codex.endings.indexOf(ending.title) < 0) s.codex.endings.push(ending.title);
+      var bustLine = Game._settleLineFor('bust');
+      s.settleLine = (bustLine && bustLine.text) ? bustLine.text : null;
       var body = '<p>耐心归零，旁白赢了这一局。</p>' +
         '<p>你在第 <b>' + s.round + '</b> 轮被劝退，手里还剩 <b>' + s.coins + '</b> 金币。</p>' +
         '<p>结局：<b>' + ending.title + '</b>' + (ending.desc ? '（' + ending.desc + '）' : '') + '</p>' +
+        '<p class="muted">种子：<b>' + Game.seedTag() + '</b></p>' +
         '<p class="fine">游戏内金币纯属娱乐，非真实货币。</p>';
       Game._saveCodex();
       Game._saveBest();
+      Game._finishStats();
+      Game._checkAchievements();
       var ui = Game._ui();
       Game._endingModal = {
         kind: 'gameover', title: '耐心归零', body: body, ending: ending,
         actions: [
           { label: '再来一局', choice: 'restart', primary: true },
+          { label: '复制种子', choice: 'save_seed' },
           { label: '看图鉴', choice: 'codex' }
         ]
       };
@@ -920,6 +1117,16 @@
         case 'clear_codex':
           Game.clearCodex();
           return Game.showCodex();
+        case 'save_seed':
+          Game.saveSeed();
+          return true;
+        case 'help':
+          return Game.openHelp();
+        case 'settings':
+          return Game.openSettings();
+        case 'clear_save':
+          Game.clearSave();
+          return Game.openSettings();
         case 'close':
         case 'dismiss':
           Game._closeModal();
@@ -930,6 +1137,18 @@
           }
           return true;
         default:
+          if (typeof choice === 'string' && choice.indexOf('persona:') === 0) {
+            Game.setPersonality(choice.slice(8));
+            return Game.openSettings();
+          }
+          if (typeof choice === 'string' && choice.indexOf('pref:') === 0) {
+            var pk = choice.slice(5);
+            var pp = prefsOf();
+            if (pk === 'sound') Game.savePref('sound', pp.sound === false);
+            else if (pk === 'bgm') Game.savePref('bgm', pp.bgm === false);
+            else if (pk === 'speed') Game.savePref('animationSpeed', pp.animationSpeed === 'fast' ? 'full' : 'fast');
+            return Game.openSettings();
+          }
           if (typeof choice === 'string' && choice.indexOf('buy:') === 0) {
             var bought = Game.buy(choice.slice(4));
             /* 买成功就重开弹层刷新金币与「已有」；买不起/到上限只 toast，弹层留着。 */
@@ -1225,20 +1444,266 @@
       return delay(0).then(tick);
     },
 
+    /* ------------------------------------- 契约 v4：人格 / 偏好 / 成就 / 统计 / 种子 */
+
+    /** 当前人格 id。 */
+    personality: function () { return (Game.state && Game.state.personality) || 'sarcastic'; },
+
+    /** 全部人格（含名称/图标/说明/撒谎率偏移）。 */
+    personalities: function () {
+      return personaTable().map(function (p) {
+        return { id: p.id, name: p.name || p.id, icon: p.icon || '', desc: p.desc || '', lieRateDelta: Number(p.lieRateDelta) || 0 };
+      });
+    },
+
+    /** 切换旁白人格：写 state + 偏好，同步旁白层。 */
+    setPersonality: function (id) {
+      if (!personaOf(id)) return false;
+      var s = Game.state;
+      if (s) s.personality = id;
+      var prefs = prefsOf();
+      prefs.persona = id;
+      var seen = prefs.personasSeen || [];
+      if (seen.indexOf(id) < 0) seen.push(id);
+      prefs.personasSeen = seen;
+      writePrefs(prefs);
+      var narrator = Game.deps && Game.deps.narrator;
+      if (narrator && typeof narrator.setPersonality === 'function') {
+        try { narrator.setPersonality(id); } catch (e) { /* 静默 */ }
+      }
+      var p = personaOf(id);
+      Game._toast('旁白人格：' + (p && p.name ? p.name : id));
+      Game._checkAchievements();
+      Game._render();
+      return true;
+    },
+
+    /** 本机偏好（读）。 */
+    prefs: function () { return prefsOf(); },
+
+    /** 写一条偏好并落盘（onboarded / muted / persona / animationSpeed / bgm / sound）。 */
+    savePref: function (key, value) {
+      var prefs = prefsOf();
+      prefs[key] = value;
+      writePrefs(prefs);
+      if (key === 'muted') { mutedPref = value === true; if (Game.state) Game.state.flags.muted = mutedPref; }
+      if (key === 'onboarded' && Game.state) Game.state.flags.onboarded = value === true;
+      if (key === 'persona' && Game.state && personaOf(value)) Game.state.personality = value;
+      Game._render();
+      return prefs;
+    },
+
+    /** 体验过的人格（persona3 成就判定用）。 */
+    personaSeen: function () {
+      var prefs = prefsOf();
+      return Array.isArray(prefs.personasSeen) ? prefs.personasSeen.slice() : [];
+    },
+
+    /** 已解锁成就 id 列表（读存档，合并当前 state）。 */
+    achievements: function () {
+      var store = Game._store();
+      var list = [];
+      if (store && typeof store.loadAchievements === 'function') {
+        try { list = store.loadAchievements() || []; } catch (e) { list = []; }
+      }
+      var s = Game.state;
+      if (s) {
+        (s.achievements || []).forEach(function (id) { if (list.indexOf(id) < 0) list.push(id); });
+        s.achievements = list.slice();
+      }
+      return list;
+    },
+
+    /** 成就完整视图：[{id,name,icon,desc,unlocked}]。 */
+    achievementList: function () {
+      var unlocked = Game.achievements();
+      return achievementTable().map(function (a) {
+        return {
+          id: a.id, name: a.name || a.id, icon: a.icon || 'star',
+          desc: a.desc || '', unlocked: unlocked.indexOf(a.id) >= 0
+        };
+      });
+    },
+
+    /** 判定并解锁成就，返回本次新解锁的 id 列表。 */
+    _checkAchievements: function () {
+      var s = Game.state;
+      if (!s) return [];
+      var unlocked = Game.achievements();
+      var fresh = [];
+      achievementTable().forEach(function (a) {
+        if (!a || !a.id || unlocked.indexOf(a.id) >= 0) return;
+        var ck = a.check || {};
+        var fn = ACH_CHECK[ck.type];
+        if (typeof fn !== 'function') return;
+        var ok = false;
+        try { ok = fn(s, ck.threshold); } catch (e) { ok = false; }
+        if (ok) { unlocked.push(a.id); fresh.push(a.id); }
+      });
+      if (fresh.length) {
+        var store = Game._store();
+        if (store && typeof store.saveAchievements === 'function') { try { store.saveAchievements(unlocked); } catch (e) { /* 静默 */ } }
+        s.achievements = unlocked.slice();
+        var names = fresh.map(function (id) { var a = achievementById(id); return (a && a.name) || id; });
+        Game._toast('解锁成就：' + names.join('、'));
+      }
+      return fresh;
+    },
+
+    /** 统计档案（读存档）。 */
+    stats: function () {
+      var store = Game._store();
+      var st = null;
+      if (store && typeof store.loadStats === 'function') {
+        try { st = store.loadStats(); } catch (e) { st = null; }
+      }
+      if (!st) st = { games: 0, totalCoins: 0, bestCoins: 0, bestRound: 0, challenges: 0, challengeWins: 0, endings: [] };
+      if (Game.state) Game.state.stats = st;
+      return st;
+    },
+
+    /** 局终写统计（幂等：每局只写一次）。 */
+    _finishStats: function () {
+      var s = Game.state;
+      if (!s || s.statsSaved) return false;
+      s.statsSaved = true;
+      var st = Game.stats();
+      st.games = (Number(st.games) || 0) + 1;
+      st.totalCoins = (Number(st.totalCoins) || 0) + (Number(s.coins) || 0);
+      st.bestCoins = Math.max(Number(st.bestCoins) || 0, Number(s.coins) || 0);
+      st.bestRound = Math.max(Number(st.bestRound) || 0, Number(s.round) || 0);
+      st.challenges = (Number(st.challenges) || 0) + (s.challengesWon || 0) + (s.challengesLost || 0);
+      st.challengeWins = (Number(st.challengeWins) || 0) + (s.challengesWon || 0);
+      var ending = s.endingId ? Game.endingSpec(s.endingId) : null;
+      if (ending && ending.title && st.endings.indexOf(ending.title) < 0) st.endings.push(ending.title);
+      var store = Game._store();
+      if (store && typeof store.saveStats === 'function') { try { store.saveStats(st); } catch (e) { /* 静默 */ } }
+      s.stats = st;
+      return true;
+    },
+
+    /** 当前种子标签（8 位十六进制）。 */
+    seedTag: function () {
+      var s = Game.state;
+      return (s && s.seedTag) || seedTagOf((s && s.rng && s.rng.seed) || root.DEMO_SEED);
+    },
+
+    /** 当前种子的分享链接。 */
+    seedUrl: function () { return seedUrlOf(Game.seedTag()); },
+
+    /** 复制种子（有剪贴板就复制，否则只 toast）。 */
+    saveSeed: function () {
+      var tag = Game.seedTag();
+      var url = Game.seedUrl();
+      var cb = Game.deps && Game.deps.clipboard;
+      if (cb && typeof cb.copy === 'function') {
+        try { cb.copy(url); Game._toast('种子已复制：' + tag); return true; } catch (e) { /* 降级 */ }
+      }
+      Game._toast('种子：' + tag + '（' + url + '）');
+      return false;
+    },
+
+    /** 新手引导步骤（已完成 → []）。 */
+    tutorialSteps: function () {
+      var s = Game.state;
+      var prefs = prefsOf();
+      if ((s && s.flags && s.flags.onboarded) || prefs.onboarded) return [];
+      return [
+        { id: 'tut_door', step: 1, title: '三扇门', text: '每轮三扇门：一扇大奖、一扇小奖、一扇空门。你选一扇，主持人会再打开一扇。', anchor: '#doors' },
+        { id: 'tut_narrator', step: 2, title: '旁白会骗你', text: '旁白每轮说两句话，真假掺着来。别信它，自己看代价。', anchor: '#narrator' },
+        { id: 'tut_decide', step: 3, title: '五个决策', text: '坚持 / 换门 / 质疑 / 加倍 / 收手——收手最稳，加倍最刺激。', anchor: '#decide' },
+        { id: 'tut_challenge', step: 4, title: '质疑与加倍', text: '怀疑值只有 2 点，用在刀刃上；加倍让收益和惩罚一起翻倍。', anchor: '#decide' },
+        { id: 'tut_cashout', step: 5, title: '随时收手', text: '按 C 或点「收手」把金币带回家；随时按 ? 看规则。', anchor: 'cashout' }
+      ];
+    },
+
+    /** 规则弹层（「规则」按钮 / ?）。 */
+    openHelp: function () {
+      /* 必选流程弹层（本轮结算/结算页/结束页）优先：信息弹层盖上去后一关就会把玩家卡在无弹层的状态里。 */
+      if (blockingModalOpen()) { Game._toast('先处理当前弹层里的选择'); return false; }
+      var ui = Game._ui();
+      var body =
+        '<p><b>三扇门</b>：每轮一扇大奖、一扇小奖、一扇空门。选一扇后主持人会开一扇空门，然后你决策。</p>' +
+        '<p><b>五个决策</b>：坚持（免费）· 换门（现金币）· 质疑（花 1 怀疑值赌旁白在骗你）· 加倍（本轮收益与代价 ×2）· 收手（落袋为安）。</p>' +
+        '<p><b>快捷键</b>：1/2/3 选门 · Q 质疑 · D 加倍 · S 换门 · C 收手 · 空格 坚持 · M 静音 · ? 规则 · Esc 关闭弹层。</p>' +
+        '<p class="muted">金币可去商店买道具；怀疑值每轮最多用一次；耐心归零就结束。</p>';
+      if (ui.openModal) {
+        Game._safe(function () {
+          ui.openModal({ kind: 'help', title: '怎么玩', body: body, actions: [{ label: '知道了', choice: 'close', primary: true }] });
+        });
+      }
+      return true;
+    },
+
+    /** 设置弹层（人格 / 音效 / 动画 / 清空数据）。 */
+    openSettings: function () {
+      if (blockingModalOpen()) { Game._toast('先处理当前弹层里的选择'); return false; }
+      var ui = Game._ui();
+      var prefs = prefsOf();
+      var personas = Game.personalities().map(function (p) {
+        return '<li class="persona-row' + (p.id === prefs.persona ? ' is-active' : '') + '">' +
+          '<button type="button" class="modal-btn persona-btn" data-choice="persona:' + p.id + '">' +
+          (p.icon ? p.icon + ' ' : '') + p.name + '</button>' +
+          '<span class="muted">' + (p.desc || '') + '</span></li>';
+      }).join('');
+      var body =
+        '<p><b>旁白人格</b></p><ul class="persona-list">' + personas + '</ul>' +
+        '<p><b>声音</b>：' + (prefs.sound !== false ? '开' : '关') + ' · <b>BGM</b>：' + (prefs.bgm !== false ? '开' : '关') +
+        ' · <b>动画速度</b>：' + (prefs.animationSpeed === 'fast' ? '快' : prefs.animationSpeed === 'off' ? '关' : '正常') + '</p>' +
+        '<p class="muted">种子：' + Game.seedTag() + '</p>';
+      if (ui.openModal) {
+        Game._safe(function () {
+          ui.openModal({
+            kind: 'settings', title: '设置', body: body,
+            actions: [
+              { label: '有声音效：' + (prefs.sound !== false ? '关' : '开'), choice: 'pref:sound' },
+              { label: 'BGM：' + (prefs.bgm !== false ? '关' : '开'), choice: 'pref:bgm' },
+              { label: '动画：' + (prefs.animationSpeed === 'fast' ? '正常' : '快'), choice: 'pref:speed' },
+              { label: '清空全部数据', choice: 'clear_save' },
+              { label: '关闭', choice: 'close', primary: true }
+            ]
+          });
+        });
+      }
+      return prefs;
+    },
+
+    /** 清空全部本地数据（图鉴 / 最佳 / 统计 / 成就 / 偏好）。 */
+    clearSave: function () {
+      var store = Game._store();
+      if (store && typeof store.clearAll === 'function') { try { store.clearAll(); } catch (e) { /* 静默 */ } }
+      var s = Game.state;
+      if (s) {
+        s.codex = { items: [], lines: [], endings: [] };
+        s.achievements = [];
+        s.stats = null;
+        s.flags.onboarded = false;
+      }
+      Game._toast('本地数据已清空。');
+      Game._render();
+      return true;
+    },
+
     /* ------------------------------------------------------------ 内部工具 */
 
     _freshState: function (mode, seed) {
       var cfg = config();
       var res = cfg.initial || root.DEFAULT_RESOURCES;
+      var prefs = prefsOf();
+      if (seedPref != null) { mode = MODES.NORMAL; seed = seedPref; }   // 契约 v4 §6：?seed= 重放优先
       var demo = (mode !== MODES.NORMAL);
       var data = Game.deps.data;
       var seedValue = demo
         ? ((data && data.seedDemo && data.seedDemo.seed) || root.DEMO_SEED)
         : (seed == null ? (Game.deps.now() >>> 0) : seed);
       var st = createInitialState(mode, { seed: seedValue, resources: res, rehearsal: rehearsalPref });
-      st.flags.muted = mutedPref;   // 静音跨重置/切换模式保持（见 mutedPref 注释）
+      st.personality = personaOf(prefs.persona) ? prefs.persona : 'sarcastic';
+      st.seedTag = seedTagOf(st.rng.seed);
+      st.flags.onboarded = prefs.onboarded === true;
+      st.flags.muted = mutedPref || prefs.muted === true;   // 静音跨重置/切换模式保持（见 mutedPref 注释）
       st.joinedAt = Game.deps.now();
       Game._loadCodexInto(st);
+      Game._loadExtrasInto(st);
       return st;
     },
 
@@ -1332,6 +1797,22 @@
       return Game._play('playNarratorLine', [line, 2]);
     },
 
+    /**
+     * 结算 / 收手点评句（契约 v4 §3.6）。
+     * 展示用：取句后把 RNG 游标还原，避免影响后续发牌与固定种子演示的确定性。
+     */
+    _settleLineFor: function (kind) {
+      var s = Game.state;
+      var narrator = Game.deps && Game.deps.narrator;
+      if (!s || !s.rng || !narrator || typeof narrator.settleLine !== 'function') return null;
+      var before = { seed: s.rng.seed, cursor: s.rng.cursor };
+      var line = null;
+      try { line = narrator.settleLine(s, { kind: kind, round: s.round }); } catch (e) { line = null; }
+      s.rng.cursor = before.cursor;
+      if (line) Game._unlockLine(line);
+      return line;
+    },
+
     _wait: function (ms) {
       var setT = Game.deps.setTimeout || fallbackTimeout;
       return new Promise(function (resolve) {
@@ -1422,6 +1903,22 @@
       var store = Game._store();
       if (!store || !store.saveCodex) return false;
       try { return !!store.saveCodex(Game.state.codex); } catch (e) { return false; }
+    },
+
+    /** 契约 v4：开局把成就 / 统计读进 state（无存档 → 空）。 */
+    _loadExtrasInto: function (st) {
+      var store = Game._store();
+      if (!store) return st;
+      try {
+        if (typeof store.loadAchievements === 'function') {
+          var a = store.loadAchievements();
+          if (Array.isArray(a) && a.length) st.achievements = a.slice();
+        }
+      } catch (e) { /* 静默 */ }
+      try {
+        if (typeof store.loadStats === 'function') st.stats = store.loadStats();
+      } catch (e) { /* 静默 */ }
+      return st;
     },
 
     /** 最佳成绩：金币取最大、轮次取最高、称号取并集。 */

@@ -22,6 +22,8 @@
       <button type="button" id="btn-shop" class="ctrl ctrl-shop" title="用金币买道具（决策阶段可用）">商店</button>
       <button type="button" id="btn-mute" class="ctrl" aria-pressed="false" title="静音">静音</button>
       <button type="button" id="btn-skip" class="ctrl" title="跳过动画">跳过动画</button>
+      <button type="button" id="btn-help" class="ctrl" title="规则与快捷键（?）">规则</button>
+      <button type="button" id="btn-settings" class="ctrl" title="设置">设置</button>
     </nav>
   </header>
 
@@ -36,6 +38,24 @@
 
   <!-- 演示提词器（契约 v3 §5.1）：?rehearsal=1 或 #rehearsal 时由 js/ui.js 显示，固定定位不占布局 -->
   <section id="rehearsal" hidden aria-live="polite"><span id="rehearsal-text"></span></section>
+
+  <!-- 新手引导气泡（契约 v4 §4.1）：固定定位，不占布局 -->
+  <section id="tutorial" hidden aria-live="polite">
+    <div id="tutorial-bubble">
+      <h3 id="tutorial-title"></h3>
+      <p id="tutorial-text"></p>
+      <div id="tutorial-actions">
+        <button type="button" id="tutorial-skip" class="modal-btn">跳过</button>
+        <button type="button" id="tutorial-next" class="modal-btn primary">下一步</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 结算彩带层（契约 v4 §4.6）：纯装饰，pointer-events:none -->
+  <div id="confetti" hidden aria-hidden="true"></div>
+
+  <!-- 竖屏降级提示（契约 v4 §4.7） -->
+  <section id="portrait-hint" hidden>建议横屏体验</section>
 
   <!-- 旁白条 -->
   <aside id="narrator" aria-live="polite">
