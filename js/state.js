@@ -69,6 +69,11 @@
     narratorLines: [],               // 本轮 2 句
     hostOpenedSlot: null,
     log: [],                         // 每轮结果，用于结算页
+    spentCoins: 0,                   // 商店累计消费（结算页“商店花了 X 金币”）
+    shopBuys: 0,                     // 商店累计购买件数
+    shopBought: {},                  // 即时商品的单局购买计数 { itemId: n }（背包商品看 items）
+    itemBuffs: { fuse: false },      // 已激活的本轮道具增益（保险丝等）
+    muteCardUsed: false,             // 闭嘴卡待生效：沉默「下一轮」的旁白，narrate 消费后自动清空
     codex: { items: [], lines: [], endings: [] }
   });
 
@@ -95,6 +100,11 @@
       narratorLines: [],
       hostOpenedSlot: null,
       log: [],
+      spentCoins: 0,
+      shopBuys: 0,
+      shopBought: {},
+      itemBuffs: { fuse: false },
+      muteCardUsed: false,
       codex: { items: [], lines: [], endings: [] },
 
       /* ---- 阶段 2+ 追加字段（默认值即“未触发”） ---- */

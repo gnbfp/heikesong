@@ -64,6 +64,19 @@
     { min: 300, max: Infinity, title: '反杀旁白' }
   ];
 
+  /* ---------------- 商店兜底表（data/shop.json 未就绪时也能跑；数值同设计契约 §2.2） */
+
+  var DEFAULT_ECONOMY = { switchCost: 15, shopOpenStates: ['DECIDE', 'SETTLE_ROUND'], spentStat: true };
+
+  var SHOP_FALLBACK = [
+    { id: 'switch_ticket', name: '换门券', price: 25, cap: 3, kind: 'bag', icon: 'ticket', desc: '换门时自动消耗，省下 15 金币。' },
+    { id: 'mute_card', name: '闭嘴卡', price: 20, cap: 2, kind: 'bag', icon: 'mute', desc: '用掉它，本轮旁白闭嘴——但它也听不见你质疑。' },
+    { id: 'double_coins', name: '双倍金币', price: 40, cap: 2, kind: 'bag', icon: 'double', desc: '本轮收益与代价一起翻倍。' },
+    { id: 'fuse', name: '保险丝', price: 35, cap: 2, kind: 'bag', icon: 'fuse', desc: '本轮第一次负面结算直接归零。' },
+    { id: 'mystery_box', name: '神秘盒', price: 15, cap: 3, kind: 'instant', icon: 'box', desc: '当场开，开到什么全看这一局的手气。' },
+    { id: 'patience_charm', name: '续命符', price: 60, cap: 2, kind: 'instant', icon: 'charm', desc: '立刻回 1 点耐心，最多攒到 5。' }
+  ];
+
   /* ------------------------------------------------------------ 依赖与工具 */
 
   function fallbackTimeout(fn) { fn(); return 0; }
@@ -110,6 +123,38 @@
   }
   function isTopPrize(id) { return id === 'big_prize'; }
   function isNoPrize(id) { return kindOf(id) === 'no-prize'; }
+
+  /** 商店表：优先用 GameData.shop，缺数据时退化到兜底表（保证零构建下永不空窗）。 */
+  function shopTable() {
+    var list = Game.deps && Game.deps.data && Game.deps.data.shop;
+    return (Array.isArray(list) && list.length) ? list : SHOP_FALLBACK;
+  }
+  function shopDef(id) {
+    var list = shopTable();
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i];
+    return null;
+  }
+  function economy() {
+    var e = config().economy;
+    return (e && typeof e === 'object') ? e : DEFAULT_ECONOMY;
+  }
+  /**
+   * 单局限购数：数据层用 cap:null + unlimited:true 表示「不限购」（神秘盒）。
+   * 返回 Infinity 表示不限购，非法值退化到 3（保险丝表兜底）。
+   */
+  function shopCap(def) {
+    if (!def) return 3;
+    if (def.unlimited === true || def.cap == null) return Infinity;
+    var c = Number(def.cap);
+    return isFinite(c) && c >= 0 ? c : 3;
+  }
+  /** 是否为「购买即结算」的即时商品（数据层 kind:'instant' 或派生 immediate:true）。 */
+  function shopInstant(def) { return !!def && (def.kind === 'instant' || def.immediate === true); }
+  /** 续命符的耐心天花板（与单局限购 cap 解耦）：数据层 patienceCap，缺省 5。 */
+  function patienceCapOf(def) {
+    var c = def && Number(def.patienceCap);
+    return isFinite(c) && c > 0 ? c : 5;
+  }
 
   /* -------------------------------------------------------------- Game 本体 */
 
@@ -199,7 +244,7 @@
     /**
      * 统一动作入口：UI 只调 Game.action({type, ...})，不直接改 state。
      * type ∈ start | pick | peek | decide | skip_line | settle | modal_choice |
-     *        reset | toggle_demo | toggle_mute | skip_anim
+     *        reset | toggle_demo | toggle_mute | skip_anim | shop | use_item
      */
     action: function (type, payload) {
       if (type && typeof type === 'object') { payload = type; type = payload.type; }
@@ -229,6 +274,12 @@
         case 'modal_choice':
           return Game.modalChoice(payload.choice);
 
+        case 'shop':
+          return Game.openShop();
+
+        case 'use_item':
+          return Game.useItem(payload.id).ok;
+
         default:
           Game._warn('未知动作', type);
           return false;
@@ -250,6 +301,9 @@
       s.narratorLines = [];
       s.lastChallenge = null;
       s.flags.revealLocked = false;
+      s.itemBuffs = { fuse: false };   // 道具增益只在「使用的这一轮」有效
+      /* 闭嘴卡不在这里重置：它在 DECIDE 里使用，沉默的是**下一轮**的旁白
+         （本轮旁白早已念完），由 narrate() 消费后自动清空。 */
       s.doors = Game.generateDoors(s.round);
       Game.setState(STATES.ROUND_INTRO);
 
@@ -276,6 +330,15 @@
     narrate: function () {
       var s = Game.state;
       var narrator = Game.deps.narrator;
+      /* 闭嘴卡：本轮旁白一句话都不说（防剧透）；
+         代价是这一轮也没有「旁白的话」可供质疑——见 challenge() 里的同一处判定。 */
+      if (s.muteCardUsed) {
+        s.narratorLines = [];
+        s.muteCardUsed = false;        // 一次生效一轮，消费掉
+        Game._toast('闭嘴卡生效：这一轮旁白一句话都不说。');
+        Game.setState(STATES.PICK);
+        return;
+      }
       if (!narrator || typeof narrator.pickRoundLines !== 'function') {
         Game.setState(STATES.PICK);
         return;
@@ -367,7 +430,9 @@
           return Game.challenge();
 
         case CHOICES.SWITCH:
-          Game.switchDoor();
+          /* 契约 §2.1：换门失败（既没券、金币也不够）时「不换门，留在 DECIDE」，
+             不能被 reveal() 拖着进入开奖。 */
+          if (!Game.switchDoor()) return false;
           return Game.reveal();
 
         case CHOICES.STICK:
@@ -383,7 +448,12 @@
       }
     },
 
-    /** 换门：在未被主持人打开的门里换到另一扇（背包有换门券则消耗，否则同样可换）。 */
+    /**
+     * 换门：在未被主持人打开的门里换到另一扇。
+     * 代价（评审：换门此前免费即恒为正收益，券也就成了废纸）：
+     *   有换门券 → 消耗 1 张，不花金币；否则要花 economy.switchCost（默认 15）金币；
+     *   两者都没有 → 不换门，留在 DECIDE。
+     */
     switchDoor: function () {
       var s = Game.state;
       var from = s.pickedSlot;
@@ -391,13 +461,25 @@
         return d.slot !== from && !d.opened && !d.revealed;
       });
       if (!cands.length) return false;
-      var next = cands[0].slot;
+      var cost = Number(economy().switchCost);
+      if (!isFinite(cost) || cost < 0) cost = DEFAULT_ECONOMY.switchCost;
       var ticket = Game._itemCount('switch_ticket');
-      if (ticket > 0) Game._consumeItem('switch_ticket', 1);
-      s.pickedSlot = next;
-      s.switchStreak = (s.switchStreak || 0) + 1;
+      if (ticket > 0) {
+        Game._consumeItem('switch_ticket', 1);
+      } else if (s.coins >= cost) {
+        Game._apply({ id: 'shop_switch', label: '换门', coins: -cost }, { multiplier: 1, source: 'shop' });
+      } else {
+        Game._toast('换门需要 ' + cost + ' 金币或一张换门券（现在只有 ' + s.coins + ' 金币）。');
+        return false;
+      }
+      var next = cands[0].slot;
+      /* _apply 内部会把 Game.state 换成新对象（clone + 冻结），
+         所以这里必须重新取当前 state，否则改写落在旧对象上：钱扣了、横幅说换了门，结算却仍按原门。 */
+      var cur = Game.state;
+      cur.pickedSlot = next;
+      cur.switchStreak = (cur.switchStreak || 0) + 1;
       Game._render();
-      Game._toast('换到 ' + (next + 1) + ' 号门' + (ticket > 0 ? '（消耗换门券）' : ''));
+      Game._toast('换到 ' + (next + 1) + ' 号门' + (ticket > 0 ? '（消耗换门券）' : '（−' + cost + ' 金币）'));
       return true;
     },
 
@@ -412,6 +494,10 @@
          限制为每轮一次，并把这次机会算作已用（失败也消耗），让它重新变成资源决策。 */
       if (s.challengedThisRound) {
         Game._toast('同一轮的旁白只会被拆穿一次。');
+        return false;
+      }
+      if (s.muteCardUsed) {
+        Game._toast('旁白已经被闭嘴卡按住了，没什么可质疑的。');
         return false;
       }
       if (!narrator || typeof narrator.resolveChallenge !== 'function') {
@@ -450,6 +536,153 @@
       var special = narrator.special ? narrator.special(s, 'challenge') : null;
       if (special) Game._playLine(special);
       return true;
+    },
+
+    /* -------------------------------------------------------------- 商店 */
+
+    /** 打开商店（仅 DECIDE / SETTLE_ROUND；商店是弹层遮罩，不是状态机状态）。 */
+    openShop: function () {
+      var s = Game.state;
+      var states = economy().shopOpenStates || DEFAULT_ECONOMY.shopOpenStates;
+      if (states.indexOf(s.phase) < 0) {
+        Game._toast('商店只在决策阶段开门。');
+        return false;
+      }
+      var spec = Game.shopSpec();
+      var ui = Game._ui();
+      if (ui.openModal) Game._safe(function () { ui.openModal(spec); });
+      Game._emitter.emit({ type: 'shop', state: Game.state, spec: spec });
+      return true;
+    },
+
+    /** 商店弹层 spec（ui 只渲染，不做业务判断）。 */
+    shopSpec: function () {
+      var s = Game.state;
+      var list = shopTable();
+      var items = list.map(function (d) {
+        var cap = shopCap(d);
+        var instant = shopInstant(d);
+        var unlimited = (cap === Infinity);
+        var owned = instant ? (((s.shopBought || {})[d.id]) || 0) : Game._itemCount(d.id);
+        // 续命符：耐心已到天花板时不给买（否则花 60 金币买一次空操作）
+        var patienceFull = instant && d.id === 'patience_charm' && s.patience >= patienceCapOf(d);
+        return {
+          id: d.id, name: d.name, price: d.price, desc: d.desc, icon: d.icon || d.id,
+          kind: instant ? 'instant' : 'bag', immediate: instant, unlimited: unlimited,
+          owned: owned,
+          cap: cap === Infinity ? null : cap,     // null = 不限购（神秘盒）
+          affordable: s.coins >= d.price,
+          capped: patienceFull || owned >= cap
+        };
+      });
+      return {
+        kind: 'shop',
+        title: '道具商店',
+        body: '金币 ' + s.coins + ' · 花掉的金币不会回来，换来的道具当场生效或进背包。',
+        coins: s.coins,
+        items: items,
+        actions: [{ label: '关闭', choice: 'close' }]
+      };
+    },
+
+    /**
+     * 买一件商品。返回 { ok, reason }；reason ∈ '' | unknown | phase | cap | insufficient。
+     * 扣款走 _apply（显式 multiplier:1），避免「加倍」状态下把售价也翻倍。
+     */
+    buy: function (id) {
+      var s = Game.state;
+      var def = shopDef(id);
+      if (!def) { Game._toast('没有这件商品。'); return { ok: false, reason: 'unknown' }; }
+      var states = economy().shopOpenStates || DEFAULT_ECONOMY.shopOpenStates;
+      if (states.indexOf(s.phase) < 0) {
+        Game._toast('商店只在决策阶段开门。');
+        return { ok: false, reason: 'phase' };
+      }
+      var instant = shopInstant(def);
+      var cap = shopCap(def);
+      // 背包商品看 items；即时商品（购买即结算、不进背包）看 shopBought 计数，两者都要吃单局限购
+      var ownedBought = instant ? (((s.shopBought || {})[id]) || 0) : Game._itemCount(id);
+      if (ownedBought >= cap) {
+        Game._toast(instant
+          ? (def.name + '一局最多买 ' + cap + ' 次。')
+          : (def.name + '已经拿满了（最多 ' + cap + ' 个）。'));
+        return { ok: false, reason: 'cap' };
+      }
+      if (instant && id === 'patience_charm' && s.patience >= patienceCapOf(def)) {
+        Game._toast('耐心已经满了（最多 ' + patienceCapOf(def) + ' 点），这 ' + def.price + ' 金币先省着。');
+        return { ok: false, reason: 'cap' };
+      }
+      if (s.coins < def.price) {
+        Game._toast('金币不够：' + def.name + '要 ' + def.price + '，现在只有 ' + s.coins + '。');
+        return { ok: false, reason: 'insufficient' };
+      }
+
+      if (instant) {
+        /* 即时道具：购买当场结算（同种子可复现；扣款与结算分两步，便于测试与文案拆分）。 */
+        var paid = Game._apply({ id: 'shop_buy', label: def.name, coins: -def.price }, { multiplier: 1, source: 'shop' });
+        s = paid.state;
+        s.spentCoins = (s.spentCoins || 0) + def.price;
+        s.shopBuys = (s.shopBuys || 0) + 1;
+        s.shopBought = s.shopBought || {};
+        s.shopBought[id] = ownedBought + 1;
+        if (id === 'patience_charm') {
+          Game._apply({ id: 'patience_charm', label: def.name, patience: 1 }, { multiplier: 1, source: 'item' });
+          Game._toast('续命符：耐心 +1（现在 ' + Game.state.patience + '）。');
+        } else {
+          Game._apply(id, { multiplier: 1, source: 'item' });
+          Game._toast('神秘盒开出来了，自己看 HUD。');
+        }
+      } else {
+        var applied = Game._apply(
+          { id: 'shop_buy', label: def.name, coins: -def.price, items: [{ id: id, count: 1 }] },
+          { multiplier: 1, source: 'shop' }
+        );
+        s = applied.state;
+        s.spentCoins = (s.spentCoins || 0) + def.price;
+        s.shopBuys = (s.shopBuys || 0) + 1;
+        Game._toast('买到 ' + def.name + '（−' + def.price + ' 金币），去背包里用。');
+      }
+      Game._emitter.emit({ type: 'buy', id: id, price: def.price, state: Game.state });
+      Game._render();
+      return { ok: true, reason: '' };
+    },
+
+    /**
+     * 用一件背包道具（仅 DECIDE）。返回 { ok, reason }；reason ∈ '' | empty | phase | noop | unknown。
+     * double_coins 复用 decide(DOUBLE) 的既有语义；switch_ticket 只在换门时被动消耗。
+     */
+    useItem: function (id) {
+      var s = Game.state;
+      var def = shopDef(id);
+      if (!def) return { ok: false, reason: 'unknown' };
+      if (Game._itemCount(id) <= 0) return { ok: false, reason: 'empty' };
+      if (s.phase !== STATES.DECIDE) return { ok: false, reason: 'phase' };
+
+      if (id === 'switch_ticket') {
+        Game._toast('换门券不用点，换门时自动消耗。');
+        return { ok: false, reason: 'noop' };
+      }
+      if (id === 'double_coins') {
+        if (s.doubled) { Game._toast('本轮已经加倍了。'); return { ok: false, reason: 'noop' }; }
+        Game.decide(CHOICES.DOUBLE);
+        Game._consumeItem(id, 1);
+        return { ok: true, reason: '' };
+      }
+      if (id === 'mute_card') {
+        s.muteCardUsed = true;
+        Game._consumeItem(id, 1);
+        Game._toast('闭嘴卡：下一轮旁白闭嘴（这一轮剩下的质疑也一并挡掉）。');
+        return { ok: true, reason: '' };
+      }
+      if (id === 'fuse') {
+        s.itemBuffs = s.itemBuffs || {};
+        s.itemBuffs.fuse = true;
+        Game._consumeItem(id, 1);
+        Game._toast('保险丝已接好：本轮第一次负面结算归零。');
+        return { ok: true, reason: '' };
+      }
+      Game._toast('这件道具暂时用不上。');
+      return { ok: false, reason: 'noop' };
     },
 
     /* -------------------------------------------------------------- 开奖 */
@@ -579,6 +812,9 @@
       var body = '<p class="big">最终金币：<b>' + s.coins + '</b></p>' +
         '<p>闯到第 <b>' + s.round + '</b> 轮</p>' +
         '<p>称号：<b>' + rating.title + '</b></p>' +
+        (s.spentCoins > 0
+          ? '<p class="muted">你在商店花了 <b>' + s.spentCoins + '</b> 金币，买了 ' + (s.shopBuys || 0) + ' 件道具。</p>'
+          : '') +
         (highlight ? '<p class="muted">' + highlight + '</p>' : '') +
         '<p class="fine">游戏内金币纯属娱乐，非真实货币。</p>';
       Game._saveCodex();
@@ -657,6 +893,12 @@
           }
           return true;
         default:
+          if (typeof choice === 'string' && choice.indexOf('buy:') === 0) {
+            var bought = Game.buy(choice.slice(4));
+            /* 买成功就重开弹层刷新金币与「已有」；买不起/到上限只 toast，弹层留着。 */
+            if (bought.ok) Game.openShop();
+            return bought.ok;
+          }
           return false;
       }
     },
@@ -891,7 +1133,38 @@
       }
       var res = fn(Game.state, effect, opts) || {};
       Game.state = res.state || Game.state;
-      return res;
+      return Game._fuseGuard(res, opts);
+    },
+
+    /**
+     * 保险丝（商店道具）：本轮第一次「负面结算」的金币 / 耐心 / 怀疑值损失全部归零，
+     * 顺带撤掉耐心归零的死亡标记。只在开奖结算（source==='reveal'）时生效，
+     * 买道具被宰不算（那是玩家自己的选择）。
+     */
+    _fuseGuard: function (res, opts) {
+      var s = Game.state;
+      if (!s.itemBuffs || !s.itemBuffs.fuse) return res;
+      if (!opts || opts.source !== 'reveal') return res;
+      var d = res.delta || {};
+      var back = {
+        coins: d.coins < 0 ? -d.coins : 0,
+        patience: d.patience < 0 ? -d.patience : 0,
+        suspicion: d.suspicion < 0 ? -d.suspicion : 0
+      };
+      if (!back.coins && !back.patience && !back.suspicion) return res;
+
+      var fn = Game.deps.applyEffect;
+      var fixed = fn(Game.state, {
+        id: 'fuse_save', label: '保险丝',
+        coins: back.coins, patience: back.patience, suspicion: back.suspicion
+      }, { multiplier: 1, source: 'item' }) || {};
+      Game.state = fixed.state || Game.state;
+      Game.state.itemBuffs.fuse = false;   // 一根保险丝只顶一次
+      Game.state.gameOver = false;         // 死亡标记一并撤销（耐心已被补回）
+      var merged = fixed;
+      merged.delta = { coins: 0, patience: 0, suspicion: 0 };
+      merged.events = (res.events || []).concat([{ type: 'fuse_saved', coins: back.coins, patience: back.patience, suspicion: back.suspicion }]);
+      return merged;
     },
 
     _play: function (method, args) {

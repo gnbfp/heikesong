@@ -19,6 +19,7 @@
     <nav id="controls">
       <button type="button" id="btn-reset" class="ctrl" title="重置回演示起点">重置</button>
       <button type="button" id="btn-demo" class="ctrl" title="切换演示 / 普通模式">演示模式</button>
+      <button type="button" id="btn-shop" class="ctrl ctrl-shop" title="用金币买道具（决策阶段可用）">商店</button>
       <button type="button" id="btn-mute" class="ctrl" aria-pressed="false" title="静音">静音</button>
       <button type="button" id="btn-skip" class="ctrl" title="跳过动画">跳过动画</button>
     </nav>
@@ -60,6 +61,13 @@
     <button type="button" class="decide-btn" data-choice="challenge">质疑旁白</button>
     <button type="button" class="decide-btn" data-choice="double">加倍下注</button>
     <button type="button" class="decide-btn" data-choice="cashout">收手</button>
+  </section>
+
+  <!-- 背包：商店买的道具在这里，决策阶段可点使用 -->
+  <section id="bag" class="bag" aria-label="背包" hidden>
+    <div id="bag-title" class="bag-title">背包</div>
+    <div id="bag-list" class="bag-list"><!-- .bag-slot 由 js/ui.js 渲染 --></div>
+    <div id="bag-empty" class="bag-empty">背包空空如也</div>
   </section>
 
   <!-- 开始遮罩（IDLE） -->
