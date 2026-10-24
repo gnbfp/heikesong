@@ -3,13 +3,15 @@
  * ----------------------------------------------------------------------------
  * 契约（《开工清单》阶段 2/4 + js/game.js 实际调用）：
  *   Narrator.pickRoundLines(state, script) -> [line, line]（长度恒为 2）
- *     line = { id, text, kind, truthful }
+ *     line = { id, text, kind, truthful[, claimable, claimType, claim] }
  *     · script 非空（演示剧本）时按 script.narrator = 'truth'|'lie'|'lie_hard' 出牌；
  *     · script 为 null（普通模式）时用 state.rng 走 lieRate(state) 决定真/假，
- *       同 seed + 同 cursor 必得同一结果（不额外消耗随机数来做文案挑选）。
+ *       同 seed + 同 cursor 必得同一结果（不额外消耗随机数来做文案挑选）；
+ *     · claimable 行会附一条可判定线索 claim（契约 v3 §1.1），只走 state.rng。
  *   Narrator.lieRate(state) -> 0..1：base + grudge × grudgeLieBonus（封顶 cap）。
  *   Narrator.resolveChallenge(state, line) -> { ok, rewardMode, coins, patience,
- *     suspicion, text, grudgeLevel, hint }：只判定，绝不改 state。
+ *     suspicion, text, grudgeLevel, hint, claim }：只判定，绝不改 state。
+ *   Narrator.endingLine(state, endingId) -> line | null（结算页赛后点评）。
  *   Narrator.highlight(state, roundResult) -> 结算页高亮文案（字符串）。
  *   Narrator.special(state, trigger) -> line | null，trigger ∈ switch3 /
  *     challenge2 / empty3 / challenge（顺带兼容 intro / flavor）。
@@ -39,13 +41,20 @@
   /** 拷贝成独立 line，避免调用方（或 UI）改到内联语料。 */
   function cloneLine(l) {
     if (!l) return null;
-    return {
+    var out = {
       id: l.id,
       text: l.text,
       kind: l.kind,
       truthful: l.truthful !== false,
       trigger: l.trigger == null ? null : l.trigger
     };
+    if (l.claimable === true) {
+      out.claimable = true;
+      out.claimType = l.claimType || null;
+    }
+    if (l.claim) out.claim = l.claim;
+    if (l.lineKind) out.lineKind = l.lineKind;
+    return out;
   }
 
   function linesOfKind(kind) {
@@ -89,6 +98,145 @@
     return (num(state && state.grudge, 0) >= hardAt) ? 'lie_hard' : 'lie';
   }
 
+  /* ---------------------------------------------------------------- 线索 */
+  /* 契约 v3 §1.1：claimable 行可以带一条「可判定线索」，让质疑成功/失败 */
+  /* 有客观依据。线索必须：按真实 state.doors 计算、避开主持人已开的门、 */
+  /* 只走 state.rng（同种子可复现）、文案与槽位一致。                     */
+  var CLAIM_TYPES = ['slot_kind', 'big_prize_in', 'picked_kind'];
+
+  function itemIds() {
+    var d = gameData() || {};
+    var list = d.itemList || [];
+    var out = [];
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id) out.push(list[i].id);
+    if (!out.length) {
+      var map = d.items || {};
+      for (var k in map) if (Object.prototype.hasOwnProperty.call(map, k)) out.push(k);
+    }
+    return out;
+  }
+
+  /** 门的统一视图：slot / itemId / opened（兼容 doors[i].id 命名）。 */
+  function doorList(state) {
+    var doors = (state && state.doors) || [];
+    var out = [];
+    for (var i = 0; i < doors.length; i++) {
+      var d = doors[i];
+      if (!d) continue;
+      out.push({
+        slot: (d.slot == null) ? i : Number(d.slot),
+        itemId: d.itemId || d.id || null,
+        opened: !!d.opened
+      });
+    }
+    return out;
+  }
+
+  function pickedSlotOf(state) {
+    var s = state || {};
+    var p = (s.pickedSlot != null) ? s.pickedSlot
+      : (s.selectedSlot != null) ? s.selectedSlot
+        : (s.picked != null) ? s.picked : null;
+    var n = Number(p);
+    return (p != null && isFinite(n) && n >= 0) ? n : null;
+  }
+
+  function pickFrom(state, list) {
+    if (!list || !list.length) return null;
+    var r = state && state.rng;
+    if (r && root.RNG && typeof root.RNG.pick === 'function') {
+      try { return root.RNG.pick(r, list); } catch (e) { /* 兜底 */ }
+    }
+    var f = rngFloat(state);
+    var idx = Math.floor(f * list.length);
+    if (idx < 0) idx = 0;
+    if (idx >= list.length) idx = list.length - 1;
+    return list[idx];
+  }
+
+  /** 从文案里解析「N 号门」，保证 claim.slot 与播出的字一致。 */
+  function slotFromText(text) {
+    var m = String(text == null ? '' : text).match(/([1-9])\s*号门/);
+    return m ? Number(m[1]) - 1 : null;
+  }
+
+  /**
+   * 为一条 claimable 行生成线索；不可行时返回 null（例如 picked_kind 但玩家
+   * 还没选门 —— 引擎在开旁白前不让玩家选门，故该类型延迟到质疑时刻生成）。
+   * usedSlots 是同一轮内已占用的槽位（避免同一轮两句线索自相矛盾）。
+   */
+  function claimFor(state, line, usedSlots) {
+    var src = (line && typeof line === 'object') ? line : lineById(line);
+    if (!src || src.claimable !== true) return null;
+    var type = src.claimType;
+    if (CLAIM_TYPES.indexOf(type) < 0) return null;
+
+    var doors = doorList(state);
+    if (!doors.length) return null;
+    var open = [];
+    for (var i = 0; i < doors.length; i++) if (!doors[i].opened) open.push(doors[i]);
+    if (!open.length) return null;
+
+    var truth = (src.kind === 'truth');
+    var used = usedSlots || [];
+
+    function free(list) {
+      var out = [];
+      for (var j = 0; j < list.length; j++) {
+        if (used.indexOf(list[j].slot) < 0) out.push(list[j]);
+      }
+      return out.length ? out : list;
+    }
+    function bySlot(slot) {
+      for (var j = 0; j < open.length; j++) if (open[j].slot === slot) return open[j];
+      return null;
+    }
+    function otherKind(id) {
+      var all = itemIds();
+      var alt = [];
+      for (var j = 0; j < all.length; j++) if (all[j] !== id) alt.push(all[j]);
+      return pickFrom(state, alt);
+    }
+
+    if (type === 'picked_kind') {
+      var ps = pickedSlotOf(state);
+      if (ps == null) return null;
+      var pd = bySlot(ps);
+      if (!pd || pd.itemId == null) return null;
+      var pk = truth ? pd.itemId : (otherKind(pd.itemId) || pd.itemId);
+      return { type: 'picked_kind', kind: pk, truthful: pk === pd.itemId };
+    }
+
+    if (type === 'big_prize_in') {
+      if (truth) {
+        var hit = null;
+        for (var b = 0; b < open.length; b++) {
+          if (open[b].itemId === 'big_prize') { hit = open[b]; break; }
+        }
+        if (!hit) return null;
+        used.push(hit.slot);
+        return { type: 'big_prize_in', slot: hit.slot, truthful: true };
+      }
+      var noTop = [];
+      for (var c = 0; c < open.length; c++) if (open[c].itemId !== 'big_prize') noTop.push(open[c]);
+      if (!noTop.length) return null;
+      var lp = pickFrom(state, free(noTop));
+      if (!lp) return null;
+      used.push(lp.slot);
+      return { type: 'big_prize_in', slot: lp.slot, truthful: false };
+    }
+
+    /* slot_kind：优先文案里点名的那扇门，保证「N 号门」与 claim.slot 一致。 */
+    var named = slotFromText(src.text);
+    var target = (named == null) ? null : bySlot(named);
+    if (!target) target = pickFrom(state, free(open));
+    if (!target) return null;
+    if (truth && target.itemId == null) return null;
+    var kind = truth ? target.itemId : (otherKind(target.itemId) || target.itemId);
+    used.push(target.slot);
+    return { type: 'slot_kind', slot: target.slot, kind: kind, truthful: kind === target.itemId };
+  }
+
   /**
    * 本轮旁白：恒定 2 句。第一句是判定句、第二句是补刀 —— 引擎用
    * narratorLines[0] 交给 resolveChallenge，所以两种模式的 truthfulness 必须整组一致。
@@ -105,12 +253,19 @@
     var list = pairs[mode];
     if (!Array.isArray(list) || !list.length) list = pairs.truth || [];
     var round = Math.max(1, Math.round(num(state && state.round, 1)));
+    var usedSlots = [];
+    function attach(l) {
+      if (!l) return null;
+      var c = claimFor(state, l, usedSlots);
+      if (c) l.claim = c;
+      return l;
+    }
     var out = [];
     if (list.length) {
       var idx = (round - 1) % list.length;
       var pair = list[idx] || list[0];
-      for (var i = 0; i < pair.length; i++) {
-        var l = cloneLine(lineById(pair[i]));
+      for (var i = 0; i < (pair || []).length; i++) {
+        var l = attach(cloneLine(lineById(pair[i])));
         if (l) out.push(l);
       }
     }
@@ -119,7 +274,7 @@
     var pool = linesOfKind(mode === 'lie_hard' ? 'lie_hard' : mode);
     if (!pool.length) pool = linesOfKind('truth');
     for (var k = 0; out.length < 2 && pool.length && k < pool.length; k++) {
-      out.push(cloneLine(pool[k]));
+      out.push(attach(cloneLine(pool[k])));
     }
     return out;
   }
@@ -141,7 +296,8 @@
   }
 
   /**
-   * 判定质疑：line.truthful === false（旁白撒谎）才算成功。纯函数，不改 state。
+   * 判定质疑：优先用 line.claim（线索真伪），没有线索时回退旧路径
+   * line.truthful === false。纯函数，不改 state。
    */
   function resolveChallenge(state, line) {
     var sus = config().suspicion || {};
@@ -150,7 +306,12 @@
     var loseCoins = num(sus.loseCoins, 20);
     var losePatience = num(sus.losePatience, 1);
     var rewardMode = sus.rewardMode === 'hint' ? 'hint' : 'coins';
-    var lied = !!(line && line.truthful === false);
+
+    /* claim 已在 pickRoundLines 生成则原样带回；picked_kind 这类当时不可行的
+       线索（引擎先播旁白、后让玩家选门）在这里用同一 state 补生成一次。 */
+    var claim = (line && line.claim) ? line.claim : null;
+    if (!claim && line && line.claimable === true) claim = claimFor(state, line, null);
+    var lied = claim ? !claim.truthful : !!(line && line.truthful === false);
 
     var out = {
       ok: lied,
@@ -160,7 +321,8 @@
       suspicion: -cost,
       text: '',
       grudgeLevel: num(state && state.grudge, 0),
-      hint: null
+      hint: null,
+      claim: claim || null
     };
     if (lied) {
       if (rewardMode === 'hint') {
@@ -204,6 +366,32 @@
     return '第 ' + round + ' 轮结束：手气不好不坏。';
   }
 
+  /**
+   * 结局赛后点评：endingId（computeEndingId 的结果）→ config.endings[id].lineKind
+   * → narrator.endings[lineKind] 里随机一句。纯读，走 state.rng 可复现。
+   */
+  function endingLine(state, endingId) {
+    if (!endingId) return null;
+    var table = doc().endings || {};
+    var def = (config().endings || {})[endingId] || null;
+    var keys = [];
+    if (def && def.lineKind) keys.push(def.lineKind);
+    keys.push(endingId);
+    keys.push('ending_' + endingId);
+    var pool = null;
+    for (var i = 0; i < keys.length && !pool; i++) {
+      var list = table[keys[i]];
+      if (Array.isArray(list) && list.length) pool = list;
+    }
+    if (!pool) return null;
+    var l = cloneLine(pickFrom(state, pool));
+    if (l) {
+      if (!l.kind) l.kind = 'ending';
+      l.lineKind = keys[0];
+    }
+    return l;
+  }
+
   /** 彩蛋：按 trigger 取 line；state 上的连击数不满足需要时返回 null。 */
   function special(state, trigger) {
     if (!trigger) return null;
@@ -228,7 +416,9 @@
         break;
       }
     }
-    return cloneLine(list[0]);
+    /* 同一 trigger 有多句彩蛋时按轮次轮播（不额外消耗随机数）。 */
+    var rd = Math.max(1, Math.round(num(state && state.round, 1)));
+    return cloneLine(list[(rd - 1) % list.length]);
   }
 
   root.Narrator = {
@@ -237,6 +427,8 @@
     resolveChallenge: resolveChallenge,
     highlight: highlight,
     special: special,
+    endingLine: endingLine,
+    claimFor: claimFor,
     lineById: lineById
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -23,7 +23,10 @@
     "demoSeed": 20261024,
     "itemCount": 9,
     "itemAliasCount": 1,
-    "narratorCount": 24
+    "narratorCount": 60,
+    "claimableCount": 13,
+    "endingLineCount": 16,
+    "endingCount": 8
   };
 
   var itemList = [
@@ -45,12 +48,12 @@
       "name": "小奖",
       "coins": 30,
       "patience": 0,
-      "suspicion": 0,
+      "suspicion": 1,
       "weight": 22,
       "minRound": 1,
       "lateWeight": 22,
       "kind": "prize",
-      "desc": "金币 +30。小甜头，容易让人上头。",
+      "desc": "金币 +30、怀疑值 +1。甜头也上头。",
       "icon": "小"
     },
     {
@@ -58,12 +61,12 @@
       "name": "空门",
       "coins": 0,
       "patience": 0,
-      "suspicion": 0,
+      "suspicion": 1,
       "weight": 20,
       "minRound": 1,
       "lateWeight": 20,
       "kind": "no-prize",
-      "desc": "什么都没有。连回声都懒得给你。",
+      "desc": "空手而归，怀疑值 +1。连回声都没有。",
       "icon": "空"
     },
     {
@@ -177,7 +180,10 @@
       "losePatience": 1,
       "grudgeLieBonus": 0.2,
       "rewardMode": "coins",
-      "maxGrudge": 3
+      "maxGrudge": 3,
+      "max": 3,
+      "comboStep": 10,
+      "comboCap": 20
     },
     "economy": {
       "switchCost": 15,
@@ -225,6 +231,56 @@
       "minCoins": 200,
       "title": "见好就收大师",
       "desc": "该走就走，这是赌桌上最贵的一课。"
+    },
+    "endings": {
+      "all_in": {
+        "priority": 100,
+        "title": "全识破",
+        "desc": "一次质疑都没输过，旁白的谎话被你逐条拆开。",
+        "lineKind": "ending_all_in"
+      },
+      "comeback": {
+        "priority": 90,
+        "title": "绝地翻盘",
+        "desc": "金币见底之后还能翻回两百，今晚的桌子记住你了。",
+        "lineKind": "ending_comeback"
+      },
+      "iron_patience": {
+        "priority": 80,
+        "title": "稳如老狗",
+        "desc": "三轮之后耐心一点没掉，你从不上头。",
+        "lineKind": "ending_iron"
+      },
+      "master": {
+        "priority": 70,
+        "title": "见好就收大师",
+        "desc": "该拿的钱拿到手，该走的时候一步不停。",
+        "lineKind": "ending_master"
+      },
+      "pua": {
+        "priority": 60,
+        "title": "被旁白 PUA",
+        "desc": "旁白说什么你都信，金币替他保管了一晚。",
+        "lineKind": "ending_pua"
+      },
+      "euro": {
+        "priority": 50,
+        "title": "欧皇候选",
+        "desc": "没怎么动脑，手气替你做完了一切。",
+        "lineKind": "ending_euro"
+      },
+      "anti": {
+        "priority": 40,
+        "title": "反杀旁白",
+        "desc": "你把旁白的谎话全换成了金币带走。",
+        "lineKind": "ending_anti"
+      },
+      "normal": {
+        "priority": 0,
+        "title": "普通赌徒",
+        "desc": "不赚不亏地活了下来，也是一种本事。",
+        "lineKind": "ending_normal"
+      }
     },
     "ratings": [
       {
@@ -319,7 +375,7 @@
   };
 
   var narrator = {
-    "source": "《三扇门：别信旁白》开工清单 · 阶段 2/4 旁白语料（每句 ≤28 字）",
+    "source": "《三扇门：别信旁白》开工清单 · 阶段 2/4 旁白语料 + 设计契约 v3 §1（claim 线索）/§3（语录扩容）/§4.1（endings 赛后点评）",
     "pairs": {
       "truth": [
         [
@@ -329,6 +385,14 @@
         [
           "t03",
           "t04"
+        ],
+        [
+          "t05",
+          "t06"
+        ],
+        [
+          "t07",
+          "t08"
         ]
       ],
       "lie": [
@@ -339,6 +403,14 @@
         [
           "l03",
           "l04"
+        ],
+        [
+          "l05",
+          "l06"
+        ],
+        [
+          "l07",
+          "l08"
         ]
       ],
       "lie_hard": [
@@ -349,9 +421,22 @@
         [
           "h03",
           "l03"
+        ],
+        [
+          "h05",
+          "l05"
+        ],
+        [
+          "h07",
+          "h08"
         ]
       ]
     },
+    "claimTypes": [
+      "slot_kind",
+      "big_prize_in",
+      "picked_kind"
+    ],
     "lines": [
       {
         "id": "t01",
@@ -373,7 +458,47 @@
       },
       {
         "id": "t04",
-        "text": "别犹豫，奖品没长腿。",
+        "text": "你选的那扇，奖品可没长腿。",
+        "kind": "truth",
+        "truthful": true,
+        "claimable": true,
+        "claimType": "picked_kind"
+      },
+      {
+        "id": "t05",
+        "text": "1 号门，我看得清清楚楚。",
+        "kind": "truth",
+        "truthful": true,
+        "claimable": true,
+        "claimType": "slot_kind"
+      },
+      {
+        "id": "t06",
+        "text": "大奖就压在那一扇上，我看见了。",
+        "kind": "truth",
+        "truthful": true,
+        "claimable": true,
+        "claimType": "big_prize_in"
+      },
+      {
+        "id": "t07",
+        "text": "你选的那扇，我给它打过光。",
+        "kind": "truth",
+        "truthful": true,
+        "claimable": true,
+        "claimType": "picked_kind"
+      },
+      {
+        "id": "t08",
+        "text": "3 号门，我盯了很久。",
+        "kind": "truth",
+        "truthful": true,
+        "claimable": true,
+        "claimType": "slot_kind"
+      },
+      {
+        "id": "t09",
+        "text": "我今晚只说实话，你自己掂量。",
         "kind": "truth",
         "truthful": true
       },
@@ -402,6 +527,44 @@
         "truthful": false
       },
       {
+        "id": "l05",
+        "text": "2 号门，我替你确认过了。",
+        "kind": "lie",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "slot_kind"
+      },
+      {
+        "id": "l06",
+        "text": "1 号门，我劝你别碰。",
+        "kind": "lie",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "slot_kind"
+      },
+      {
+        "id": "l07",
+        "text": "大奖已经被人换走了，别惦记。",
+        "kind": "lie",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "big_prize_in"
+      },
+      {
+        "id": "l08",
+        "text": "你选的那扇，我替你看过了。",
+        "kind": "lie",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "picked_kind"
+      },
+      {
+        "id": "l09",
+        "text": "信我一次，就一次，好吗？",
+        "kind": "lie",
+        "truthful": false
+      },
+      {
         "id": "h01",
         "text": "我以旁白的名誉担保，选它。",
         "kind": "lie_hard",
@@ -426,6 +589,44 @@
         "truthful": false
       },
       {
+        "id": "h05",
+        "text": "3 号门，我已经查过了。",
+        "kind": "lie_hard",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "slot_kind"
+      },
+      {
+        "id": "h06",
+        "text": "大奖就在你眼前这一扇，快选。",
+        "kind": "lie_hard",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "big_prize_in"
+      },
+      {
+        "id": "h07",
+        "text": "你手里那扇，我可太熟了。",
+        "kind": "lie_hard",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "picked_kind"
+      },
+      {
+        "id": "h08",
+        "text": "大奖早被我挪到别的门后了。",
+        "kind": "lie_hard",
+        "truthful": false,
+        "claimable": true,
+        "claimType": "big_prize_in"
+      },
+      {
+        "id": "h09",
+        "text": "你要是敢质疑我，就等着瞧。",
+        "kind": "lie_hard",
+        "truthful": false
+      },
+      {
         "id": "cw01",
         "text": "……算你赢。",
         "kind": "challenge_win",
@@ -440,6 +641,24 @@
       {
         "id": "cw03",
         "text": "好吧，这次是真的，别得意。",
+        "kind": "challenge_win",
+        "truthful": true
+      },
+      {
+        "id": "cw04",
+        "text": "你赢了，我的词穷了。",
+        "kind": "challenge_win",
+        "truthful": true
+      },
+      {
+        "id": "cw05",
+        "text": "行，这一局你的眼睛更亮。",
+        "kind": "challenge_win",
+        "truthful": true
+      },
+      {
+        "id": "cw06",
+        "text": "又被你抓住了，我记下了。",
         "kind": "challenge_win",
         "truthful": true
       },
@@ -462,14 +681,92 @@
         "truthful": true
       },
       {
+        "id": "cf04",
+        "text": "多疑的人，金币留不住。",
+        "kind": "challenge_fail",
+        "truthful": true
+      },
+      {
+        "id": "cf05",
+        "text": "这次是你冤枉我了，付钱吧。",
+        "kind": "challenge_fail",
+        "truthful": true
+      },
+      {
+        "id": "cf06",
+        "text": "看，白花了二十金币。",
+        "kind": "challenge_fail",
+        "truthful": true
+      },
+      {
         "id": "in01",
-        "text": "三扇门，一扇大奖，两扇空。",
+        "text": "三扇门，门后什么都可能。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "in02",
+        "text": "灯光已就位，请挑一扇。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "in03",
+        "text": "今晚的规则很简单：别信我。",
+        "kind": "intro",
+        "truthful": true
+      },
+      {
+        "id": "in04",
+        "text": "手别抖，我先开口了。",
         "kind": "intro",
         "truthful": true
       },
       {
         "id": "fl01",
         "text": "灯光很亮，金币很响。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "fl02",
+        "text": "观众席上一片安静。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "fl03",
+        "text": "记分牌在闪，像在催你。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "fl04",
+        "text": "空气里有铜锈味。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "fl05",
+        "text": "有人在你背后数金币。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "fl06",
+        "text": "台下的呼吸声有点吵。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "fl07",
+        "text": "地毯上有一道旧划痕。",
+        "kind": "flavor",
+        "truthful": true
+      },
+      {
+        "id": "fl08",
+        "text": "钟摆晃了一下，没人说话。",
         "kind": "flavor",
         "truthful": true
       },
@@ -500,8 +797,141 @@
         "kind": "special",
         "truthful": true,
         "trigger": "challenge"
+      },
+      {
+        "id": "s05",
+        "text": "三扇门你都指过了，选不出来？",
+        "kind": "special",
+        "truthful": true,
+        "trigger": "switch3"
+      },
+      {
+        "id": "s06",
+        "text": "两次都被你识破，我改词。",
+        "kind": "special",
+        "truthful": true,
+        "trigger": "challenge2"
+      },
+      {
+        "id": "s07",
+        "text": "又是空的，你要不要看看手心。",
+        "kind": "special",
+        "truthful": true,
+        "trigger": "empty3"
+      },
+      {
+        "id": "s08",
+        "text": "质疑可以，别上瘾。",
+        "kind": "special",
+        "truthful": true,
+        "trigger": "challenge"
+      },
+      {
+        "id": "s09",
+        "text": "你越不信我，我越有兴致。",
+        "kind": "special",
+        "truthful": true,
+        "trigger": "challenge"
       }
-    ]
+    ],
+    "endings": {
+      "ending_all_in": [
+        {
+          "id": "e_all_in_1",
+          "text": "三问三中，你把我拆穿了。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_all_in_2",
+          "text": "我今晚一句谎都没能留住。",
+          "kind": "ending"
+        }
+      ],
+      "ending_comeback": [
+        {
+          "id": "e_comeback_1",
+          "text": "从十个金币翻回来，你狠。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_comeback_2",
+          "text": "差点出局的人，最后数钱最多。",
+          "kind": "ending"
+        }
+      ],
+      "ending_iron": [
+        {
+          "id": "e_iron_1",
+          "text": "你一次都没慌，我白说了。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_iron_2",
+          "text": "耐心还在，你赢在不动手。",
+          "kind": "ending"
+        }
+      ],
+      "ending_master": [
+        {
+          "id": "e_master_1",
+          "text": "见好就收，这才是老手。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_master_2",
+          "text": "拿着钱走的人，我拦不住。",
+          "kind": "ending"
+        }
+      ],
+      "ending_pua": [
+        {
+          "id": "e_pua_1",
+          "text": "我说什么你都信，谢了。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_pua_2",
+          "text": "金币归我，教训归你。",
+          "kind": "ending"
+        }
+      ],
+      "ending_euro": [
+        {
+          "id": "e_euro_1",
+          "text": "运气站你这边，我认。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_euro_2",
+          "text": "你什么都没算，就是赢了。",
+          "kind": "ending"
+        }
+      ],
+      "ending_anti": [
+        {
+          "id": "e_anti_1",
+          "text": "你把我按在桌上数钱了。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_anti_2",
+          "text": "今晚的旁白，是你。",
+          "kind": "ending"
+        }
+      ],
+      "ending_normal": [
+        {
+          "id": "e_normal_1",
+          "text": "不赚不亏，也是一种活法。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_normal_2",
+          "text": "牌面平平，人也平平。",
+          "kind": "ending"
+        }
+      ]
+    }
   };
 
   var seedDemo = {

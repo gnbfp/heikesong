@@ -19,12 +19,12 @@
       "name": "小奖",
       "coins": 30,
       "patience": 0,
-      "suspicion": 0,
+      "suspicion": 1,
       "weight": 22,
       "minRound": 1,
       "lateWeight": 22,
       "kind": "prize",
-      "desc": "金币 +30。小甜头，容易让人上头。",
+      "desc": "金币 +30、怀疑值 +1。甜头也上头。",
       "icon": "小"
     },
     {
@@ -32,12 +32,12 @@
       "name": "空门",
       "coins": 0,
       "patience": 0,
-      "suspicion": 0,
+      "suspicion": 1,
       "weight": 20,
       "minRound": 1,
       "lateWeight": 20,
       "kind": "no-prize",
-      "desc": "什么都没有。连回声都懒得给你。",
+      "desc": "空手而归，怀疑值 +1。连回声都没有。",
       "icon": "空"
     },
     {

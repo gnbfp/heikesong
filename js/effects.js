@@ -28,6 +28,16 @@
   function config() { var d = gameData(); return (d && d.config) || {}; }
   function num(v) { var n = Number(v); return isFinite(n) ? n : 0; }
 
+  /**
+   * 怀疑值上限：契约 v3 §2.2 要求挂在 config.suspicion.max（=3）；
+   * 配置缺失时退回 MAX_SUSPICION（99），保证老存档/裸加载不至于卡死。
+   */
+  function suspicionMax() {
+    var sus = config().suspicion || {};
+    var m = Number(sus.max);
+    return (isFinite(m) && m > 0) ? Math.round(m) : MAX_SUSPICION;
+  }
+
   function clampInt(v, min, max) {
     if (typeof root.clampInt === 'function') {
       try { return root.clampInt(v, min, max); } catch (e) { /* 兜底走下面 */ }
@@ -225,7 +235,7 @@
     var pat0 = num(next.patience);
 
     next.coins = clampInt(coins0 + dc, 0, MAX_COINS);
-    next.suspicion = clampInt(sus0 + ds, 0, MAX_SUSPICION);
+    next.suspicion = clampInt(sus0 + ds, 0, suspicionMax());
     next.patience = clampInt(pat0 + dp, 0, MAX_PATIENCE);
 
     var delta = {
@@ -271,6 +281,7 @@
     applyEffect: applyEffect,
     normalizeEffect: normalizeEffect,
     multiplierFor: multiplierFor,
+    suspicionMax: suspicionMax,
     itemDef: itemDef,
     rollMystery: rollMystery,
     RES_KEYS: RES_KEYS

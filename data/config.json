@@ -14,7 +14,10 @@
     "losePatience": 1,
     "grudgeLieBonus": 0.2,
     "rewardMode": "coins",
-    "maxGrudge": 3
+    "maxGrudge": 3,
+    "max": 3,
+    "comboStep": 10,
+    "comboCap": 20
   },
   "economy": {
     "switchCost": 15,
@@ -62,6 +65,56 @@
     "minCoins": 200,
     "title": "见好就收大师",
     "desc": "该走就走，这是赌桌上最贵的一课。"
+  },
+  "endings": {
+    "all_in": {
+      "priority": 100,
+      "title": "全识破",
+      "desc": "一次质疑都没输过，旁白的谎话被你逐条拆开。",
+      "lineKind": "ending_all_in"
+    },
+    "comeback": {
+      "priority": 90,
+      "title": "绝地翻盘",
+      "desc": "金币见底之后还能翻回两百，今晚的桌子记住你了。",
+      "lineKind": "ending_comeback"
+    },
+    "iron_patience": {
+      "priority": 80,
+      "title": "稳如老狗",
+      "desc": "三轮之后耐心一点没掉，你从不上头。",
+      "lineKind": "ending_iron"
+    },
+    "master": {
+      "priority": 70,
+      "title": "见好就收大师",
+      "desc": "该拿的钱拿到手，该走的时候一步不停。",
+      "lineKind": "ending_master"
+    },
+    "pua": {
+      "priority": 60,
+      "title": "被旁白 PUA",
+      "desc": "旁白说什么你都信，金币替他保管了一晚。",
+      "lineKind": "ending_pua"
+    },
+    "euro": {
+      "priority": 50,
+      "title": "欧皇候选",
+      "desc": "没怎么动脑，手气替你做完了一切。",
+      "lineKind": "ending_euro"
+    },
+    "anti": {
+      "priority": 40,
+      "title": "反杀旁白",
+      "desc": "你把旁白的谎话全换成了金币带走。",
+      "lineKind": "ending_anti"
+    },
+    "normal": {
+      "priority": 0,
+      "title": "普通赌徒",
+      "desc": "不赚不亏地活了下来，也是一种本事。",
+      "lineKind": "ending_normal"
+    }
   },
   "ratings": [
     {

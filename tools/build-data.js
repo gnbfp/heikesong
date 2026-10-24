@@ -33,8 +33,8 @@ var GENERATED_FROM = [
 /* 《开工清单》阶段 2 物品表 —— 逐项硬编码作为构建期防线，防手改源文件写错数值。 */
 var EXPECT_ITEMS = {
   big_prize: { coins: 100, patience: 0, suspicion: 0 },
-  small_prize: { coins: 30, patience: 0, suspicion: 0 },
-  empty: { coins: 0, patience: 0, suspicion: 0 },
+  small_prize: { coins: 30, patience: 0, suspicion: 1 },
+  empty: { coins: 0, patience: 0, suspicion: 1 },
   bomb: { coins: -50, patience: -1, suspicion: 0 },
   trap: { coins: -30, patience: 0, suspicion: -1 },
   switch_ticket: { coins: 0, patience: 0, suspicion: 0 },
@@ -83,6 +83,27 @@ var SHOP_ICONS = ['ticket', 'mute', 'double', 'fuse', 'box', 'charm'];
 var SHOP_DESC_MAX = 22;
 /* 契约 §2：换门 15 金币；商店只在 DECIDE / SETTLE_ROUND 可开；结算页统计商店花费。 */
 var EXPECT_ECONOMY = { switchCost: 15, shopOpenStates: ['DECIDE', 'SETTLE_ROUND'], spentStat: true };
+/* 契约 §2.1/§2.2：连击奖励上限与步长、怀疑值资源上限。 */
+var EXPECT_SUSPICION_MAX = 3;
+var EXPECT_COMBO = { step: 10, cap: 20 };
+/* 契约 §2.2 要求更新的两条物品 desc：写清「怀疑值 +1」且不超过 22 字。 */
+var SUSPICION_DESC_IDS = ['empty', 'small_prize'];
+var ITEM_DESC_MAX = 22;
+
+/* 契约 v3 §4.1 结局表 —— id / priority / title / lineKind 逐字硬编码；
+   narrator.json 的 endings 以 lineKind 为键，每键至少 2 条赛后点评。 */
+var EXPECT_ENDINGS = [
+  { id: 'all_in', priority: 100, title: '全识破', lineKind: 'ending_all_in' },
+  { id: 'comeback', priority: 90, title: '绝地翻盘', lineKind: 'ending_comeback' },
+  { id: 'iron_patience', priority: 80, title: '稳如老狗', lineKind: 'ending_iron' },
+  { id: 'master', priority: 70, title: '见好就收大师', lineKind: 'ending_master' },
+  { id: 'pua', priority: 60, title: '被旁白 PUA', lineKind: 'ending_pua' },
+  { id: 'euro', priority: 50, title: '欧皇候选', lineKind: 'ending_euro' },
+  { id: 'anti', priority: 40, title: '反杀旁白', lineKind: 'ending_anti' },
+  { id: 'normal', priority: 0, title: '普通赌徒', lineKind: 'ending_normal' }
+];
+var ENDING_LINE_MIN = 2;
+var ENDING_DESC_MAX = 40;
 /* 续命符的「上限 5」指【耐心资源天花板】（config.initial.patience=3 只是初值），
    与商店的【单局限购 cap=2】是两件事，故落成独立字段 patienceCap，二者解耦。 */
 var EXPECT_PATIENCE_CAP = 5;
@@ -97,11 +118,20 @@ var EXPECT_SEED = {
   ]
 };
 
-/* 旁白语料最低条数要求（阶段 2/4/5）。 */
+/* 旁白语料最低条数要求（契约 v3 §3 扩容；F3 要求总语料 60+ 条）。 */
 var KINDS = ['intro', 'truth', 'lie', 'lie_hard', 'challenge_win', 'challenge_fail', 'special', 'flavor'];
-var KIND_MIN = { intro: 1, truth: 4, lie: 4, lie_hard: 4, challenge_win: 3, challenge_fail: 3, special: 4, flavor: 1 };
+var KIND_MIN = { intro: 3, truth: 8, lie: 8, lie_hard: 8, challenge_win: 5, challenge_fail: 5, special: 8, flavor: 4 };
 var SPECIAL_TRIGGERS = ['switch3', 'challenge2', 'empty3', 'challenge'];
 var PAIR_MODES = ['truth', 'lie', 'lie_hard'];
+/* 契约 v3 §1.1：claimable 行 + 三种 claimType（每种至少 4 条，且三种 kind 都覆盖）。 */
+var CLAIM_TYPES = ['slot_kind', 'big_prize_in', 'picked_kind'];
+var CLAIM_TYPE_MIN = 4;
+var CLAIM_TEXT_RULES = {
+  slot_kind: { re: /[1-9]\s*号门/, label: '必须含「N 号门」' },
+  big_prize_in: { re: /大奖/, label: '必须含「大奖」' },
+  picked_kind: { re: /(你选|你手里)/, label: '必须含「你选 / 你手里」' }
+};
+var NARRATOR_TOTAL_MIN = 60;
 
 function fail(msg) {
   console.error('[build-data] 校验失败：' + msg);
@@ -139,6 +169,11 @@ var shopDoc = readJson('shop.json');
 if (!itemsDoc || !Array.isArray(itemsDoc.items)) fail('items.json 顶层需要 { source, items: [...] }');
 var itemList = itemsDoc.items;
 
+function itemsById(id) {
+  for (var i = 0; i < itemList.length; i++) if (itemList[i].id === id) return itemList[i];
+  return null;
+}
+
 /* ------------------------------------------------------- 校验 1：物品表逐项一致 */
 if (itemList.length !== EXPECT_ORDER.length) {
   fail('物品数量应为 ' + EXPECT_ORDER.length + '，实际 ' + itemList.length);
@@ -167,6 +202,12 @@ itemList.forEach(function (it, idx) {
   if (it.lateWeight != null && !(Number(it.lateWeight) > 0)) fail(it.id + '.lateWeight 必须是正数');
 });
 if (Number(EXPECT_ITEMS.bomb && itemList[3].minRound) < 2) fail('炸弹 minRound 必须 ≥ 2（第 1 轮不放炸弹）');
+/* 契约 §2.2：空门 / 小奖各 +1 怀疑值，desc 必须写清且保持 ≤22 字。 */
+SUSPICION_DESC_IDS.forEach(function (id) {
+  var it = itemsById(id);
+  if (String(it.desc).indexOf('怀疑值') < 0) fail(it.id + '.desc 要说清「怀疑值 +1」（契约 §2.2）');
+  if (String(it.desc).length > ITEM_DESC_MAX) fail(it.id + '.desc 超过 ' + ITEM_DESC_MAX + ' 字：' + String(it.desc).length + ' 字');
+});
 
 /* --------------------------------------------------- 校验 2：config 关键字段存在 */
 function need(pathStr, val) {
@@ -182,6 +223,14 @@ if (sus.cost !== 1 || sus.winCoins !== 20 || sus.loseCoins !== 20 || sus.losePat
   fail('suspicion 数值与《开工清单》阶段 2 不一致：' + JSON.stringify(sus));
 }
 if (sus.rewardMode !== 'coins' && sus.rewardMode !== 'hint') fail("suspicion.rewardMode 只能是 'coins' | 'hint'");
+/* 契约 v3 §2.1/§2.2：怀疑值资源上限 3；连击奖励 = winCoins + min(streak-1,2)*step。 */
+if (Number(sus.max) !== EXPECT_SUSPICION_MAX) {
+  fail('suspicion.max 应为 ' + EXPECT_SUSPICION_MAX + '（契约 §2.2 怀疑值资源上限），实际 ' + sus.max);
+}
+if (Number(sus.comboStep) !== EXPECT_COMBO.step || Number(sus.comboCap) !== EXPECT_COMBO.cap) {
+  fail('suspicion.comboStep/comboCap 应为 ' + EXPECT_COMBO.step + '/' + EXPECT_COMBO.cap + '（契约 §2.1 连击 20/30/40），实际 ' +
+    sus.comboStep + '/' + sus.comboCap);
+}
 var timings = need('timings', config.timings);
 var EXPECT_TIMINGS = { introMs: 800, narratorMs: 2000, hostOpenMs: 600, revealMs: 900, revealDoubledExtraMs: 400, resetMs: 1000 };
 Object.keys(EXPECT_TIMINGS).forEach(function (k) {
@@ -206,6 +255,33 @@ var roundHints = need('roundHints', config.roundHints);
 var maxChars = Number((config.lies || {}).maxChars || 28);
 var linesPerRound = Number((config.lies || {}).linesPerRound || 2);
 if (linesPerRound !== 2) fail('lies.linesPerRound 应为 2（引擎每轮播 2 句）');
+
+/* ------------------------- 校验 2a：结局表 config.endings（契约 v3 §4.1） */
+var endingsCfg = need('endings', config.endings);
+if (typeof endingsCfg !== 'object' || Array.isArray(endingsCfg)) {
+  fail('config.endings 必须是对象 {id: {priority,title,desc,lineKind}}（契约 §4.1）');
+}
+var endingIds = Object.keys(endingsCfg);
+if (endingIds.length !== EXPECT_ENDINGS.length) {
+  fail('config.endings 应正好 ' + EXPECT_ENDINGS.length + ' 项，实际 ' + endingIds.length + '：' + endingIds.join('/'));
+}
+EXPECT_ENDINGS.forEach(function (exp) {
+  var e = endingsCfg[exp.id];
+  if (!e) fail('config.endings 缺 ' + exp.id);
+  if (Number(e.priority) !== exp.priority) fail('config.endings.' + exp.id + '.priority 应为 ' + exp.priority + '，实际 ' + e.priority);
+  if (e.title !== exp.title) fail('config.endings.' + exp.id + '.title 应为 ' + exp.title + '，实际 ' + e.title);
+  if (e.lineKind !== exp.lineKind) fail('config.endings.' + exp.id + '.lineKind 应为 ' + exp.lineKind + '，实际 ' + e.lineKind);
+  if (!e.desc) fail('config.endings.' + exp.id + ' 缺 desc');
+  if (String(e.desc).length > ENDING_DESC_MAX) {
+    fail('config.endings.' + exp.id + '.desc 超过 ' + ENDING_DESC_MAX + ' 字：' + String(e.desc).length + ' 字');
+  }
+});
+/* priority 必须唯一，computeEndingId 才能按优先级排序取第一个命中。 */
+var seenPriority = {};
+EXPECT_ENDINGS.forEach(function (exp) {
+  if (seenPriority[exp.priority]) fail('config.endings 优先级重复：' + exp.priority);
+  seenPriority[exp.priority] = true;
+});
 
 /* --------------------------- 校验 2b：economy + 商店商品表（设计契约 §2.1/§2.2/§2.3） */
 var eco = need('economy', config.economy);
@@ -293,12 +369,70 @@ lines.forEach(function (l, i) {
 Object.keys(KIND_MIN).forEach(function (k) {
   if ((counts[k] || 0) < KIND_MIN[k]) fail('旁白 kind『' + k + '』至少 ' + KIND_MIN[k] + ' 条，实际 ' + (counts[k] || 0));
 });
+/* F3：语料总量 60+ 条（endings 单独存放，不计入 lines）。 */
+if (lines.length < NARRATOR_TOTAL_MIN) {
+  fail('旁白 lines 至少 ' + NARRATOR_TOTAL_MIN + ' 条（F3 语料扩容），实际 ' + lines.length);
+}
 var triggers = lines.filter(function (l) { return l.kind === 'special'; }).map(function (l) { return l.trigger; });
 SPECIAL_TRIGGERS.forEach(function (t) {
   if (triggers.indexOf(t) < 0) fail('缺少彩蛋旁白 trigger=' + t);
 });
 lines.forEach(function (l) {
   if (l.kind === 'special' && SPECIAL_TRIGGERS.indexOf(l.trigger) < 0) fail('彩蛋 ' + l.id + ' 的 trigger 非法：' + l.trigger);
+});
+
+/* --------- 校验 3b：claimable 线索（契约 v3 §1.1 六条硬约束的静态可查部分） */
+var claimableCount = 0;
+var claimByType = {};
+var claimKinds = [];
+lines.forEach(function (l) {
+  if (l.claimable !== true) {
+    if (l.claimType) fail('旁白 ' + l.id + ' 有 claimType 却没标 claimable');
+    return;
+  }
+  claimableCount++;
+  if (CLAIM_TYPES.indexOf(l.claimType) < 0) fail('旁白 ' + l.id + ' 的 claimType 非法：' + l.claimType);
+  if (l.kind !== 'truth' && l.kind !== 'lie' && l.kind !== 'lie_hard') {
+    fail('旁白 ' + l.id + ' 是 ' + l.kind + '，只有 truth/lie/lie_hard 能挂线索');
+  }
+  var rule = CLAIM_TEXT_RULES[l.claimType];
+  if (rule && !rule.re.test(String(l.text))) fail('旁白 ' + l.id + '（' + l.claimType + '）文案' + rule.label + '：' + l.text);
+  claimByType[l.claimType] = (claimByType[l.claimType] || 0) + 1;
+  if (claimKinds.indexOf(l.kind) < 0) claimKinds.push(l.kind);
+});
+CLAIM_TYPES.forEach(function (t) {
+  if ((claimByType[t] || 0) < CLAIM_TYPE_MIN) {
+    fail('claimType『' + t + '』至少 ' + CLAIM_TYPE_MIN + ' 条 claimable 旁白，实际 ' + (claimByType[t] || 0));
+  }
+});
+['truth', 'lie', 'lie_hard'].forEach(function (k) {
+  if (claimKinds.indexOf(k) < 0) fail('claimable 旁白必须覆盖 ' + k + ' 三种 kind 之一缺失');
+});
+
+/* --------- 校验 3c：结局赛后点评 narrator.endings（契约 v3 §4.1） */
+var endingLines = narratorDoc.endings;
+if (!endingLines || typeof endingLines !== 'object' || Array.isArray(endingLines)) {
+  fail('narrator.json 需要 { endings: { [lineKind]: [line, ...] } }');
+}
+var endingLineTotal = 0;
+var endingLineIds = {};
+EXPECT_ENDINGS.forEach(function (exp) {
+  var elist = endingLines[exp.lineKind];
+  if (!Array.isArray(elist) || elist.length < ENDING_LINE_MIN) {
+    fail('narrator.endings.' + exp.lineKind + ' 至少 ' + ENDING_LINE_MIN + ' 条（config.endings.' + exp.id + ' 的赛后点评）');
+  }
+  elist.forEach(function (l, i) {
+    if (!l || !l.id || !l.text) fail('narrator.endings.' + exp.lineKind + '#' + i + ' 缺 id/text');
+    if (endingLineIds[l.id]) fail('结局旁白 id 重复：' + l.id);
+    endingLineIds[l.id] = true;
+    if (l.kind !== 'ending') fail('结局旁白 ' + l.id + ' 的 kind 应为 ending，实际 ' + l.kind);
+    if (String(l.text).length > maxChars) fail('结局旁白 ' + l.id + ' 超过 ' + maxChars + ' 字：' + String(l.text).length + ' 字');
+    endingLineTotal++;
+  });
+});
+Object.keys(endingLines).forEach(function (k) {
+  var known = EXPECT_ENDINGS.some(function (exp) { return exp.lineKind === k; });
+  if (!known) fail('narrator.endings 出现未知 lineKind：' + k);
 });
 
 /* 每轮 2 句：配对表必须指向真实存在的 id，且第二句的 kind 与模式一致。 */
@@ -355,7 +489,10 @@ out.push('  var meta = ' + stableStringify({
   demoSeed: seedDemo.seed,
   itemCount: itemList.length,
   itemAliasCount: aliasCount,
-  narratorCount: lines.length
+  narratorCount: lines.length,
+  claimableCount: claimableCount,
+  endingLineCount: endingLineTotal,
+  endingCount: EXPECT_ENDINGS.length
 }).split('\n').join('\n  ') + ';');
 out.push('');
 out.push('  var itemList = ' + stableStringify(itemList).split('\n').join('\n  ') + ';');
@@ -537,6 +674,40 @@ if (GameData.config.economy.spentStat !== true) fail('GameData.config.economy.sp
 if (GameData.items.fuse || GameData.items.patience_charm) fail('商店独占商品 fuse / patience_charm 不得进入物品池 items');
 if (GameData.itemList.length !== 9) fail('商店改动不得影响物品池数量（itemList 应仍为 9）');
 
+/* 契约 v3：怀疑值上限 / 空门小奖怀疑值 / 结局表 / 线索语料都必须真进了产物。 */
+if (GameData.config.suspicion.max !== 3) fail('GameData.config.suspicion.max 应为 3');
+if (GameData.config.suspicion.comboStep !== 10 || GameData.config.suspicion.comboCap !== 20) {
+  fail('GameData.config.suspicion.comboStep/comboCap 应为 10/20');
+}
+if (GameData.items.empty.suspicion !== 1 || GameData.items.small_prize.suspicion !== 1) {
+  fail('空门 / 小奖的 suspicion 应为 1（契约 §2.2）');
+}
+if (!GameData.config.endings || Object.keys(GameData.config.endings).length !== EXPECT_ENDINGS.length) {
+  fail('GameData.config.endings 应含 ' + EXPECT_ENDINGS.length + ' 个结局');
+}
+if (GameData.config.endings.normal.priority !== 0 || GameData.config.endings.all_in.priority !== 100) {
+  fail('config.endings 优先级应 normal=0 / all_in=100');
+}
+if (GameData.config.endings.all_in.lineKind !== 'ending_all_in') fail('config.endings.all_in.lineKind 应为 ending_all_in');
+EXPECT_ENDINGS.forEach(function (exp) {
+  var elist = (GameData.narrator.endings || {})[exp.lineKind];
+  if (!Array.isArray(elist) || elist.length < ENDING_LINE_MIN) {
+    fail('产物里 narrator.endings.' + exp.lineKind + ' 至少 ' + ENDING_LINE_MIN + ' 条');
+  }
+  elist.forEach(function (l) {
+    if (l.kind !== 'ending' || !l.text || l.text.length > maxChars) fail('结局旁白 ' + l.id + ' 不合法');
+  });
+});
+if (GameData.narrator.lines.length < NARRATOR_TOTAL_MIN) fail('产物里旁白 lines 应 ≥ ' + NARRATOR_TOTAL_MIN + ' 条');
+var claimableInOut = GameData.narrator.lines.filter(function (l) { return l.claimable === true; });
+if (claimableInOut.length < CLAIM_TYPES.length * CLAIM_TYPE_MIN) {
+  fail('产物里 claimable 旁白应 ≥ ' + (CLAIM_TYPES.length * CLAIM_TYPE_MIN) + ' 条，实际 ' + claimableInOut.length);
+}
+CLAIM_TYPES.forEach(function (t) {
+  var n = claimableInOut.filter(function (l) { return l.claimType === t; }).length;
+  if (n < CLAIM_TYPE_MIN) fail('产物里 claimType『' + t + '』应 ≥ ' + CLAIM_TYPE_MIN + ' 条，实际 ' + n);
+});
+
 /* ------------------------------------------------------------------- 写文件 */
 if (process.argv.indexOf('--check') >= 0) {
   var current = '';
@@ -556,5 +727,6 @@ if (process.argv.indexOf('--check') >= 0) {
 fs.writeFileSync(OUT_FILE, code, 'utf8');
 console.log('[build-data] 已生成 js/data.js：' + Buffer.byteLength(code, 'utf8') + ' 字节，'
   + itemList.length + ' 种物品（+ ' + aliasCount + ' 别名） / ' + shop.length + ' 件商品 / '
-  + lines.length + ' 条旁白 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
+  + lines.length + ' 条旁白（' + claimableCount + ' 条带线索） + ' + endingLineTotal + ' 条结局点评 / '
+  + EXPECT_ENDINGS.length + ' 种结局 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
 console.log('[build-data] 来源：' + GENERATED_FROM.join('、'));
