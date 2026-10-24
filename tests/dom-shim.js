@@ -278,6 +278,15 @@ function createPage(opts) {
   sandbox.globalThis = sandbox;
   sandbox.self = sandbox;
 
+  /* 契约 v3 §5.1/§5.2 用：注入额外全局（Fake AudioContext 等）与覆盖 location
+   * —— 必须在 createContext 之前写入，脚本加载时才能读到（ui.js 在加载期读 root.AudioContext）。 */
+  if (opts.globals) {
+    Object.keys(opts.globals).forEach(function (k) { sandbox[k] = opts.globals[k]; });
+  }
+  if (opts.location) {
+    Object.keys(opts.location).forEach(function (k) { sandbox.location[k] = opts.location[k]; });
+  }
+
   /* 视口桩：六档分辨率检查用（js/ui.js 是纯 CSS 流式布局，不读 innerWidth；
    * 这里提供真实语义的 window 尺寸 + resize 事件，便于将来有 JS 响应式逻辑时同样可测）。 */
   sandbox._ev = Object.create(null);

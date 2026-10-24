@@ -27,8 +27,8 @@ var FIXED_NOW = 1730000000000;
  * mute_card 是主 id；tools/build-data.js:64 ITEM_ALIASES = { shutup_card: 'mute_card' } */
 var ITEM_SPEC = [
   { key: 'big_prize', label: '大奖', coins: 100, patience: 0, suspicion: 0, kind: 'door' },
-  { key: 'small_prize', label: '小奖', coins: 30, patience: 0, suspicion: 0, kind: 'door' },
-  { key: 'empty', label: '空门', coins: 0, patience: 0, suspicion: 0, kind: 'door' },
+  { key: 'small_prize', label: '小奖', coins: 30, patience: 0, suspicion: 1, kind: 'door' },
+  { key: 'empty', label: '空门', coins: 0, patience: 0, suspicion: 1, kind: 'door' },
   { key: 'bomb', label: '炸弹', coins: -50, patience: -1, suspicion: 0, kind: 'door' },
   { key: 'trap', label: '陷阱', coins: -30, patience: 0, suspicion: -1, kind: 'door' },
   { key: 'switch_ticket', label: '换门券', coins: 0, patience: 0, suspicion: 0, kind: 'bag', bag: 1 },
@@ -336,8 +336,8 @@ if (!applyEffect) {
   /* 7.3 金币结算正确 */
   var cases = [
     { id: 'big_prize', coins: 100, dCoins: 100, dPat: 0, dSus: 0 },
-    { id: 'small_prize', coins: 30, dCoins: 30, dPat: 0, dSus: 0 },
-    { id: 'empty', coins: 0, dCoins: 0, dPat: 0, dSus: 0 },
+    { id: 'small_prize', coins: 30, dCoins: 30, dPat: 0, dSus: 1 },
+    { id: 'empty', coins: 0, dCoins: 0, dPat: 0, dSus: 1 },
     { id: 'bomb', coins: -50, patience: -1, dCoins: -50, dPat: -1, dSus: 0 },
     { id: 'trap', coins: -30, suspicion: -1, dCoins: -30, dPat: 0, dSus: -1 }
   ];
@@ -486,6 +486,7 @@ async function driveDemo(over) {
     row.hostOpenedCount = Game.state.doors.filter(function (d) { return d.opened; }).length;
 
     if (r === 2) {
+      row.suspicionBeforeChallenge = Game.state.suspicion;
       Game.action({ type: 'decide', choice: 'challenge' });
       await micro(4);
       row.suspicionAfterChallenge = Game.state.suspicion;
@@ -550,6 +551,7 @@ function fingerprint(trace) {
         hostOpenedSlot: r.hostOpenedSlot, hostOpenedItemId: r.hostOpenedItemId,
         phaseAfterPick: r.phaseAfterPick, phaseAfterHostOpen: r.phaseAfterHostOpen,
         coinsAfterChallenge: r.coinsAfterChallenge, suspicionAfterChallenge: r.suspicionAfterChallenge,
+      suspicionBeforeChallenge: r.suspicionBeforeChallenge,
         phase: r.phase, coins: r.coins, suspicion: r.suspicion, patience: r.patience,
         itemId: r.roundResult && r.roundResult.itemId, logLen: r.logLen,
         ending: r.ending && r.ending.title
@@ -850,7 +852,12 @@ async function main() {
       ck.skip('G2.20', 'revealLocked', 'js/effects.js 未就绪');
     }
     if (FX && NR) {
-      ck.eq('G2.21', r2r.suspicionAfterChallenge, 1, '第 2 轮质疑成功消耗 1 怀疑值（2 → 1）');
+      var susBefore2 = r2r.suspicionBeforeChallenge;
+      ck.ok('G2.21',
+        typeof susBefore2 === 'number' && r2r.suspicionAfterChallenge === susBefore2 - 1 && r2r.suspicionAfterChallenge >= 0,
+        '第 2 轮质疑成功恰好消耗 1 怀疑值（' + susBefore2 + ' → ' + r2r.suspicionAfterChallenge +
+        '；第 1 轮开空门/小奖会 +1，所以不能用硬编码 2→1）',
+        '实际 before=' + susBefore2 + ' after=' + r2r.suspicionAfterChallenge);
       ck.eq('G2.22', r2r.coinsAfterChallenge, 150, '第 2 轮质疑成功 +20 金币（130 → 150）');
       ck.ok('G2.23', r2r.lastChallenge && r2r.lastChallenge.ok === true, '第 2 轮旁白撒谎 → 质疑成功（反杀高光点）',
         '实际 lastChallenge=' + jsonOf(r2r.lastChallenge));
