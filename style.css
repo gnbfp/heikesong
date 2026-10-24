@@ -16,16 +16,16 @@
 
 /* ------------------------------------------------------------------ 变量 */
 :root {
-  --bg-0: #05060b;
+  --bg-0: #05070d;                  /* 深夜地下赌场：底色（风格方向·Lead 定） */
   --bg-1: #0b1020;
   --bg-2: #141a30;
   --panel: #121829;
   --panel-2: #18203a;
   --line: #26304f;
   --line-soft: #1b2338;
-  --fg: #e8ecf8;
+  --fg: #e8eeff;                    /* 主字（风格方向·Lead 定） */
   --fg-dim: #9aa6c4;
-  --fg-faint: #6b7699;
+  --fg-faint: #8a96b6;              /* 弱化字：在 body/顶栏/HUD/卡片上都 ≥5:1（旧值 #6b7699 只有 3.3~4.5，已弃用） */
 
   --gold: #f5c451;
   --gold-deep: #a4721a;
@@ -34,6 +34,20 @@
   --danger-deep: #7a1f26;
   --green: #56d69a;
   --violet: #a97bff;
+
+  /* 阶段 2 美术：木纹 / 金属 / 商店蓝 / 聚光金 */
+  --gold-2: #ffd479;
+  --wood-1: #5c3a1e;
+  --wood-2: #382213;
+  --wood-3: #20120a;
+  --metal-1: #b6c1dc;
+  --metal-2: #3b4566;
+  --metal-3: #1a2135;
+  --blue: #2f6fd0;
+  --blue-lit: #5b93e8;
+  --blue-deep: #1c4187;
+  --green-deep: #227d55;
+  --green-lt: #86f2c1;
 
   --radius: 16px;
   --radius-sm: 10px;
@@ -75,6 +89,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   background:
+    radial-gradient(90% 55% at 50% 0%, rgba(245, 196, 81, .10) 0%, rgba(11, 16, 32, 0) 62%),
     radial-gradient(120% 90% at 50% -10%, #1b2444 0%, rgba(11, 16, 32, 0) 60%),
     radial-gradient(80% 60% at 50% 120%, #1a1330 0%, rgba(5, 6, 11, 0) 70%),
     linear-gradient(180deg, var(--bg-1), var(--bg-0));
@@ -101,11 +116,12 @@ button:focus-visible,
   border-color: var(--cyan);
 }
 
-/* 禁用态（第三态）：结构性不可用 */
+/* 禁用态（第三态）：结构性不可用。
+   透明度压到 .62 而不是更暗 —— 禁用不等于看不见（WCAG 虽豁免非活动控件，但演示机投影会洗色）。 */
 button:disabled {
   cursor: not-allowed;
-  opacity: .42;
-  filter: grayscale(.7) brightness(.85);
+  opacity: .62;
+  filter: grayscale(.5) brightness(.9);
   border-color: var(--line-soft);
   box-shadow: none;
   transform: none;
@@ -168,9 +184,23 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 }
 #btn-reset:hover { border-color: var(--danger); color: #ffd7d7; background: linear-gradient(180deg, #341a22, #1c1016); }
 
+/* 顶栏按钮的禁用态：不做整体降透明（全局 .62 会把文字压到 3:1 以下），
+   改用「透明底 + 虚线边 + 弱化字」表达不可用，文字仍 ≥5:1。 */
+.ctrl:disabled,
+.ctrl:disabled:hover {
+  opacity: 1;
+  filter: none;
+  color: var(--fg-faint);
+  border-style: dashed;
+  border-color: var(--line);
+  background: transparent;
+  transform: none;
+}
+
 /* ------------------------------------------------------------------ 舞台 */
 #stage {
   position: relative;
+  isolation: isolate;               /* 灯光层 z-index:-1 只退到舞台背景之后，不穿透 body */
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: var(--gap);
@@ -178,6 +208,46 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   padding: clamp(6px, 1.2vh, 16px) 0;
   border-radius: var(--radius);
 }
+
+/* 舞台灯光（契约 §4.2②）：顶部中央径向聚光 + 地板光池。
+   两层都是绝对定位伪元素：不占网格轨道、不参与布局、inset 收在舞台盒内，不会溢出。 */
+#stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(46% 74% at 50% -6%, rgba(255, 236, 194, .22), rgba(255, 236, 194, 0) 68%),
+    conic-gradient(from 180deg at 50% -14%,
+      rgba(255, 224, 160, .10), rgba(255, 224, 160, 0) 24%,
+      rgba(255, 224, 160, .10) 76%, rgba(255, 224, 160, 0) 100%);
+}
+#stage::after {
+  content: "";
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 0;
+  height: 36%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(62% 96% at 50% 100%, rgba(245, 196, 81, .17), rgba(245, 196, 81, 0) 74%);
+}
+
+/* 舞台暗角（契约 §4.2②）：js/ui.js 在缺失时自建 #vignette；纯遮罩，永不拦事件 */
+.vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background:
+    radial-gradient(126% 84% at 50% 42%, rgba(0, 0, 0, 0) 44%, rgba(0, 0, 0, .42) 78%, rgba(0, 0, 0, .68) 100%);
+}
+
+/* 内联 SVG 图标精灵宿主：0×0 且脱离文档流，绝不占布局 */
+.ui-icons-host { position: absolute; width: 0; height: 0; overflow: hidden; }
 
 .banner {
   justify-self: center;
@@ -205,6 +275,7 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   gap: clamp(10px, 2vw, 34px);
   min-height: 0;
   max-height: 100%;                 /* 显式上限：门区永不高于所在轨道 */
+  perspective: 1400px;              /* 给门的 3D 开合动画一个统一视点 */
 }
 
 .door {
@@ -216,67 +287,100 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   gap: .35em;
   width: 100%;
   height: 100%;
-  /* 门卡显式高度上限（P1）：取三者最小值
+  /* 门卡显式高度上限（上一轮必修 ①）：取三者最小值
      ① 100% —— 所在轨道高度（正常 16:9 下就是这一项生效，门卡高度与改前完全一致）；
      ② 104vw —— 自身门宽的 4 倍（列宽 = min(26vw, 250px) ⇒ 4 倍 = min(104vw, 1000px)），
-        保证极窄竖屏下门卡不会拉成细长条；
+        保证极窄竖屏下门卡不会拉成细长条（3840×2160 也不会出现 1:6 瘦高门）；
      ③ 1000px —— 与 250px 列宽配套的绝对上限。
-     七档验算（见 task-9 报告）里 ①②③ 的第 ① 项恒为最小值 ⇒ 1280×720 / 1920×1080
+     七档验算（见交付报告）里 ①②③ 的第 ① 项恒为最小值 ⇒ 1280×720 / 1920×1080
      两档的盒子尺寸、观感、信息完整度与改前逐像素相同。 */
   max-height: min(100%, 104vw, 1000px);
   min-height: 0;
   padding: clamp(8px, 1.6vh, 20px);
-  overflow: hidden;
+  /* 刻意不用 overflow:hidden：门板的木纹/金属都是 background，天然被 border-box 裁掉；
+     若在这里裁，矮视口下会连门名/标签一起切掉（上一轮必修 ③）。 */
+  overflow: visible;
   text-align: center;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(245, 196, 81, .2);
   border-radius: var(--radius);
+  /* 木纹门板：顶部聚光 + 竖向木纹 + 横向木纹 + 木色底 */
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(0, 0, 0, .18)),
-    repeating-linear-gradient(180deg, rgba(255, 255, 255, .028) 0 3px, rgba(0, 0, 0, .03) 3px 6px),
-    linear-gradient(180deg, #222c49, #131a2e 60%, #0d1221);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04), var(--shadow);
+    radial-gradient(70% 55% at 50% 3%, rgba(255, 228, 172, .17), rgba(255, 228, 172, 0) 66%),
+    repeating-linear-gradient(90deg,
+      rgba(0, 0, 0, .26) 0 2px, rgba(255, 255, 255, .03) 2px 5px, rgba(0, 0, 0, 0) 5px 29px),
+    repeating-linear-gradient(177deg,
+      rgba(0, 0, 0, .15) 0 3px, rgba(255, 255, 255, .022) 3px 7px),
+    linear-gradient(180deg, var(--wood-1), var(--wood-2) 58%, var(--wood-3));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .05),
+    inset 0 14px 28px rgba(0, 0, 0, .4),
+    var(--shadow);
   transition: transform .16s ease, box-shadow .2s ease, border-color .2s ease, filter .2s ease;
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
+  transform-style: preserve-3d;
 }
 
-/* 门框装饰 + 门把手 */
+/* 金属门框 + 门把手（契约 §4.2①：木纹 / 金属门框 / 编号牌 / 门把手） */
 .door::before {
   content: "";
   position: absolute;
-  inset: clamp(6px, 1vh, 12px);
-  border: 1px solid rgba(255, 255, 255, .07);
+  inset: clamp(5px, .85vh, 11px);
+  border: 1px solid rgba(182, 193, 220, .24);
   border-radius: calc(var(--radius) - 6px);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, 0) 26%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, .5),
+    0 0 0 3px rgba(0, 0, 0, .22);
   pointer-events: none;
 }
 .door::after {
   content: "";
   position: absolute;
-  right: 12%;
+  right: 11%;
   top: 50%;
-  width: clamp(6px, .8vh, 10px);
-  height: clamp(6px, .8vh, 10px);
+  width: clamp(7px, .95vh, 12px);
+  height: clamp(7px, .95vh, 12px);
+  margin-top: -.35em;
   border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #ffe9a8, var(--gold-deep));
-  box-shadow: 0 0 10px rgba(245, 196, 81, .5);
-  opacity: .75;
+  background: radial-gradient(circle at 32% 28%, #fff3cf, var(--gold) 46%, var(--gold-deep));
+  box-shadow: 0 0 12px rgba(245, 196, 81, .55), inset 0 -1px 2px rgba(0, 0, 0, .5);
+  opacity: .8;
   pointer-events: none;
 }
 
+/* 编号牌（左上角金属铭牌） */
 .door-no {
   position: absolute;
   top: clamp(6px, 1vh, 12px);
   left: clamp(8px, 1.2vh, 14px);
+  min-width: 1.9em;
+  padding: .04em .34em;
   font-size: var(--fs-xs);
-  color: var(--fg-faint);
-  letter-spacing: .18em;
+  font-weight: 700;
+  color: var(--gold-2);
+  letter-spacing: .12em;
+  text-align: center;
+  border: 1px solid rgba(245, 196, 81, .38);
+  border-radius: 5px;
+  background: linear-gradient(180deg, rgba(82, 58, 20, .92), rgba(30, 20, 8, .92));
+  box-shadow: inset 0 0 8px rgba(245, 196, 81, .16), 0 2px 6px rgba(0, 0, 0, .45);
 }
-.door-face { display: flex; flex-direction: column; align-items: center; gap: .18em; }
-.door-icon { font-size: clamp(22px, 5vh, 56px); line-height: 1; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .5)); }
-.door-name { font-size: var(--fs-md); font-weight: 700; color: var(--fg-dim); }
-.door-tag { min-height: 1.2em; font-size: var(--fs-xs); color: var(--fg-faint); letter-spacing: .08em; }
+.door-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .18em;
+  padding: .45em .6em;
+  border-radius: var(--radius-sm);
+  background: radial-gradient(80% 80% at 50% 0%, rgba(255, 236, 194, .07), rgba(0, 0, 0, .14));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 -8px 16px rgba(0, 0, 0, .3);
+}
+.door-icon { font-size: clamp(22px, 5vh, 56px); line-height: 1; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .55)); }
+.door-name { font-size: var(--fs-md); font-weight: 700; color: #cfd8ef; text-shadow: 0 1px 0 rgba(0, 0, 0, .6); }
+.door-tag { min-height: 1.2em; font-size: var(--fs-xs); color: #b9c4de; letter-spacing: .08em; }
 
 /* 可点（PICK 相位）：悬停 / 按下 / 焦点 */
 .door.is-live { cursor: pointer; border-color: rgba(90, 210, 255, .35); }
@@ -299,14 +403,21 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 .door.is-picked .door-name { color: var(--gold); }
 .door.is-picked .door-tag { color: var(--gold); }
 
-.door.is-opened { border-color: var(--line-soft); background: linear-gradient(180deg, #1a2136, #0e1322); filter: saturate(.5) brightness(.8); }
+.door.is-opened {
+  border-color: rgba(182, 193, 220, .22);
+  filter: saturate(.45) brightness(.78);
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, .3) 0 2px, rgba(255, 255, 255, .02) 2px 5px, rgba(0, 0, 0, 0) 5px 29px),
+    linear-gradient(180deg, #2b2721, #17140f 62%, #0f0d0a);
+}
 .door.is-opened .door-name { color: var(--fg-faint); }
 
 .door.is-revealed {
   border-color: var(--gold);
   background:
-    radial-gradient(70% 60% at 50% 8%, rgba(245, 196, 81, .3), rgba(245, 196, 81, 0) 70%),
-    linear-gradient(180deg, #2b2412, #14100a 65%, #0b0910);
+    radial-gradient(70% 60% at 50% 8%, rgba(245, 196, 81, .34), rgba(245, 196, 81, 0) 70%),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, .24) 0 2px, rgba(255, 255, 255, .03) 2px 5px, rgba(0, 0, 0, 0) 5px 29px),
+    linear-gradient(180deg, #3d2f13, #1a1409 65%, #0b0910);
   box-shadow: inset 0 0 0 1px rgba(245, 196, 81, .45), 0 0 44px rgba(245, 196, 81, .3), var(--shadow);
 }
 .door.is-revealed .door-name { color: #ffe9b8; text-shadow: 0 0 18px rgba(245, 196, 81, .55); }
@@ -319,11 +430,12 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 .door.peeked .door-name { color: var(--cyan); }
 .door.peeked .door-tag { color: rgba(90, 210, 255, .85); }
 
-/* -------- 门动画 -------- */
+/* -------- 门动画（开合 = 3D 掀门；装饰性光效另计） -------- */
 .door.is-peeking { animation: peekPulse .42s ease; }
 .door.is-opening { animation: openPulse .72s ease; }
 .door.anim-shake { animation: doorShake .42s ease-in-out 2; }
 .door.anim-flip { animation: doorFlip .5s cubic-bezier(.3, 1.4, .5, 1); }
+.door.anim-flip .door-face { animation: doorSwing .5s cubic-bezier(.25, .9, .3, 1); }
 .door.anim-hold { pointer-events: none; }
 
 @keyframes peekPulse {
@@ -335,6 +447,11 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   0%   { transform: rotateY(0deg); }
   55%  { transform: rotateY(-12deg); }
   100% { transform: rotateY(0deg); }
+}
+@keyframes doorSwing {
+  0%   { transform: rotateY(0deg) translateZ(0); opacity: 1; }
+  46%  { transform: rotateY(-72deg) translateZ(18px); opacity: .55; }
+  100% { transform: rotateY(0deg) translateZ(0); opacity: 1; }
 }
 @keyframes doorShake {
   0%, 100% { transform: translateX(0) rotate(0); }
@@ -364,6 +481,7 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 
 /* ------------------------------------------------------------------ 旁白 */
 #narrator {
+  position: relative;               /* 给气泡尾巴定位 */
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -408,6 +526,27 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
+/* 打字机光标（P1）：只在旁白念白中显示 */
+#narrator.is-speaking .narrator-text::after {
+  content: "▌";
+  margin-left: .12em;
+  color: var(--cyan);
+  animation: caretBlink .9s steps(1, end) infinite;
+}
+@keyframes caretBlink { 0%, 55% { opacity: 1; } 55.01%, 100% { opacity: 0; } }
+
+/* 气泡尾巴（P1）：指向舞台方向的三角，纯装饰 */
+#narrator::after {
+  content: "";
+  position: absolute;
+  left: clamp(18px, 3vw, 42px);
+  bottom: -7px;
+  width: 18px;
+  height: 8px;
+  background: linear-gradient(180deg, rgba(11, 15, 28, .92), rgba(11, 15, 28, .92));
+  clip-path: polygon(0 0, 100% 0, 28% 100%);
+  pointer-events: none;
+}
 
 .narrator-skip {
   padding: .3em .8em;
@@ -427,26 +566,47 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 .hud-item {
   position: relative;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: .6em;
+  align-items: center;
+  gap: .55em;
   padding: clamp(5px, .9vh, 12px) clamp(8px, 1.2vw, 16px);
   overflow: hidden;
   border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--line);            /* 每项一条资源色装饰条 */
   border-radius: var(--radius-sm);
-  background: linear-gradient(180deg, rgba(24, 32, 58, .9), rgba(10, 14, 27, .9));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, 0) 44%),
+    linear-gradient(180deg, rgba(24, 32, 58, .94), rgba(9, 13, 25, .94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 8px 18px rgba(0, 0, 0, .32);
 }
-.hud-label { font-size: var(--fs-xs); color: var(--fg-faint); letter-spacing: .16em; }
+.hud-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.8em;
+  height: 1.8em;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .05);
+}
+.hud-svg { width: 1.05em; height: 1.05em; }
+.hud-label { margin-right: auto; font-size: var(--fs-xs); color: var(--fg-dim); letter-spacing: .16em; }
 .hud-value { font-size: var(--fs-lg); font-weight: 800; font-variant-numeric: tabular-nums; }
+#hud-coins { border-left-color: rgba(245, 196, 81, .8); }
+#hud-suspicion { border-left-color: rgba(90, 210, 255, .8); }
+#hud-patience { border-left-color: rgba(86, 214, 154, .8); }
+#hud-coins .hud-icon { color: var(--gold); }
+#hud-suspicion .hud-icon { color: var(--cyan); }
+#hud-patience .hud-icon { color: var(--green); }
 #hud-coins .hud-value { color: var(--gold); }
 #hud-suspicion .hud-value { color: var(--cyan); }
 #hud-patience .hud-value { color: var(--green); }
+.hud-item.is-low { border-left-color: var(--danger); }
 .hud-item.is-low .hud-value { color: var(--danger); }
 
-.hud-item.flash-up { animation: flashUp .7s ease; }
-.hud-item.flash-down { animation: flashDown .7s ease; }
-.hud-item.flash { animation: flashNeutral .6s ease; }
+/* 变化反馈：240ms 一次性高亮（比旧版 700ms 更利落，不影响任何行为断言） */
+.hud-item.flash-up { animation: flashUp .24s ease-out; }
+.hud-item.flash-down { animation: flashDown .24s ease-out; }
+.hud-item.flash { animation: flashNeutral .24s ease-out; }
 @keyframes flashNeutral {
   0%   { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04); }
   40%  { box-shadow: 0 0 0 2px rgba(154, 166, 196, .55), inset 0 1px 0 rgba(255, 255, 255, .04); }
@@ -493,6 +653,9 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 }
 #decide.is-locked { opacity: .5; }
 
+/* 按钮层次（契约 §4.2④）：
+   double 金主按钮 > cashout 绿 > challenge 蓝 > stick/switch/peek 次级描边。
+   三态齐备：默认 / 悬停 / 禁用（全局 button:disabled + .is-locked/aria-disabled 虚线灰）。 */
 .decide-btn {
   padding: clamp(6px, 1.1vh, 14px) .5em;
   font-size: var(--fs-sm);
@@ -502,15 +665,61 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   border-radius: var(--radius-sm);
   background: linear-gradient(180deg, #253052, #141b31);
   border-color: #33406a;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .3);
 }
 .decide-btn:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--cyan); box-shadow: 0 12px 26px rgba(0, 0, 0, .5); }
 .decide-btn:active:not(:disabled) { transform: translateY(0) scale(.985); }
+.decide-btn:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
 
-.decide-btn[data-choice="stick"]:hover:not(:disabled) { border-color: var(--gold); color: #ffe9b8; }
-.decide-btn[data-choice="switch"]:hover:not(:disabled) { border-color: var(--cyan); color: #d8f4ff; }
-.decide-btn[data-choice="challenge"]:hover:not(:disabled) { border-color: var(--violet); color: #efe4ff; }
-.decide-btn[data-choice="double"]:hover:not(:disabled) { border-color: var(--green); color: #d8ffe9; }
-.decide-btn[data-choice="cashout"]:hover:not(:disabled) { border-color: #8fa0c9; }
+/* stick：次级（保留描边，弱化） */
+.decide-btn[data-choice="stick"] { color: #e6ecfb; border-color: #3c4a76; background: linear-gradient(180deg, #232d4c, #121830); }
+.decide-btn[data-choice="stick"]:hover:not(:disabled) { border-color: #8fa0c9; color: #fff; }
+
+/* switch：次级 + 青色描边提示「换门」 */
+.decide-btn[data-choice="switch"] { color: #d8f4ff; border-color: rgba(90, 210, 255, .5); background: linear-gradient(180deg, rgba(90, 210, 255, .16), rgba(90, 210, 255, .05)); }
+.decide-btn[data-choice="switch"]:hover:not(:disabled) { border-color: var(--cyan); color: #fff; box-shadow: 0 12px 26px rgba(90, 210, 255, .22); }
+
+/* challenge：蓝主按钮 */
+.decide-btn[data-choice="challenge"] {
+  color: #f4f8ff;
+  border-color: rgba(150, 190, 255, .55);
+  background: linear-gradient(180deg, var(--blue-lit), var(--blue) 52%, var(--blue-deep));
+  box-shadow: 0 10px 24px rgba(47, 111, 208, .3);
+}
+.decide-btn[data-choice="challenge"]:hover:not(:disabled) { border-color: #cfe2ff; color: #fff; filter: brightness(1.08); box-shadow: 0 14px 30px rgba(47, 111, 208, .42); }
+
+/* double：金主按钮（最重的选择） */
+.decide-btn[data-choice="double"] {
+  color: #241703;
+  font-weight: 800;
+  border-color: rgba(255, 231, 160, .7);
+  background: linear-gradient(180deg, #ffe9ac, var(--gold) 52%, #d29a24);
+  box-shadow: 0 10px 26px rgba(245, 196, 81, .32);
+}
+.decide-btn[data-choice="double"]:hover:not(:disabled) { border-color: #fff3cf; filter: brightness(1.06); box-shadow: 0 16px 34px rgba(245, 196, 81, .46); }
+
+/* cashout：绿（见好就收） */
+.decide-btn[data-choice="cashout"] {
+  color: #06231a;
+  font-weight: 800;
+  border-color: rgba(140, 245, 200, .5);
+  background: linear-gradient(180deg, #86f2c1, var(--green) 52%, #2f9c6a);
+  box-shadow: 0 10px 24px rgba(86, 214, 154, .28);
+}
+.decide-btn[data-choice="cashout"]:hover:not(:disabled) { border-color: var(--green-lt); filter: brightness(1.06); box-shadow: 0 16px 32px rgba(86, 214, 154, .4); }
+
+/* 真正禁用（相位不允许）：一律回到暗底，不保留主按钮色彩，避免「看着能点」；
+   这三处的文字不做整体降透明（改用暗底 + 虚线边表达不可用），保证禁用态文字仍 ≥4.5:1。 */
+.decide-btn:disabled,
+.decide-btn:disabled:hover {
+  opacity: 1;
+  filter: none;
+  color: var(--fg-faint);
+  border-color: #2a3350;
+  background: linear-gradient(180deg, #1a2135, #101527);
+  box-shadow: none;
+  transform: none;
+}
 
 /* 第二态：资源不足 —— 置灰但仍可点，点了给提示文案 */
 .decide-btn.is-locked,
@@ -520,6 +729,7 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   border-style: dashed;
   border-color: var(--line);
   color: var(--fg-faint);
+  background: linear-gradient(180deg, #1a2135, #101527);
   cursor: not-allowed;
   transform: none;
 }
@@ -643,12 +853,197 @@ body.has-modal #topbar { pointer-events: none; }
   color: var(--fg-dim);
 }
 .modal-btn:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--cyan); color: var(--fg); }
+/* 弹层按钮 + 开始按钮的禁用态同样不做整体降透明（保证文字 ≥4.5:1） */
+.modal-btn:disabled,
+.modal-btn:disabled:hover,
+#btn-start:disabled,
+#btn-start-normal:disabled {
+  opacity: 1;
+  filter: none;
+  color: var(--fg-faint);
+  border-style: dashed;
+  border-color: var(--line);
+  background: linear-gradient(180deg, #1a2135, #101527);
+  transform: none;
+}
 .modal-btn.primary {
   color: #150f02;
   border-color: transparent;
   background: linear-gradient(180deg, #ffe6a2, var(--gold) 55%, #d29a24);
 }
 .modal-btn.primary:hover:not(:disabled) { color: #150f02; }
+
+/* ==================================================== 商店 / 背包（阶段 2） */
+/* 顶栏「商店」按钮：金色描边，禁用时回到暗底 */
+.ctrl-shop {
+  color: var(--gold-2);
+  border-color: rgba(255, 212, 121, .45);
+  background: rgba(255, 212, 121, .09);
+}
+.ctrl-shop:hover:not(:disabled) { color: #fff3d6; border-color: var(--gold-2); background: rgba(255, 212, 121, .2); }
+.ctrl-shop:disabled { color: var(--fg-faint); border-color: var(--line-soft); background: transparent; }
+.ctrl-shop.is-on { color: #fff3d6; border-color: var(--gold-2); background: rgba(255, 212, 121, .22); }
+
+/* 背包：固定定位的左侧道具栏（不入 body 网格 ⇒ 不改变任何相位的轨道高度） */
+.bag {
+  position: fixed;
+  left: var(--pad);
+  top: 50%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: clamp(118px, 12vw, 172px);
+  padding: clamp(6px, .9vh, 10px);
+  border: 1px solid var(--line);
+  border-left: 3px solid rgba(255, 212, 121, .55);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(20, 27, 48, .93), rgba(8, 11, 21, .93));
+  box-shadow: var(--shadow);
+  transform: translateY(-50%);
+  transition: opacity .2s ease, transform .2s ease;
+}
+.bag.is-empty { width: clamp(96px, 9vw, 132px); opacity: .85; }
+.bag-title { font-size: var(--fs-xs); font-weight: 700; color: var(--fg-dim); letter-spacing: .16em; }
+.bag-list { display: flex; flex-direction: column; gap: 4px; }
+.bag.is-empty .bag-list { display: none; }
+
+.bag-slot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .4em;
+  width: 100%;
+  padding: .32em .45em;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--fg);
+  text-align: left;
+  border: 1px solid rgba(255, 212, 121, .3);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255, 212, 121, .12), rgba(255, 212, 121, .03));
+}
+.bag-slot:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--gold-2); background: rgba(255, 212, 121, .22); }
+.bag-slot:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
+.bag-slot:disabled,
+.bag-slot[aria-disabled="true"] { opacity: 1; filter: none; color: var(--fg-faint); border-style: dashed; border-color: var(--line); background: rgba(255, 255, 255, .03); cursor: not-allowed; transform: none; }
+.bag-icon { display: grid; place-items: center; width: 1.5em; height: 1.5em; color: var(--gold-2); }
+.bag-svg { width: 1.05em; height: 1.05em; }
+.bag-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bag-count { color: var(--gold-2); font-variant-numeric: tabular-nums; }
+.bag-empty { font-size: var(--fs-xs); color: var(--fg-dim); }
+
+/* 商店弹层：比普通弹层宽，金色描边 */
+.modal.kind-shop .modal-panel { width: min(94vw, 760px); border-color: rgba(255, 212, 121, .5); }
+.shop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8em;
+  margin-bottom: clamp(6px, 1vh, 12px);
+  flex-wrap: wrap;
+}
+.shop-wallet {
+  display: inline-flex;
+  align-items: center;
+  gap: .32em;
+  padding: .22em .7em;
+  font-weight: 800;
+  color: var(--gold-2);
+  border: 1px solid rgba(255, 212, 121, .42);
+  border-radius: 999px;
+  background: rgba(255, 212, 121, .1);
+}
+.shop-wallet b { font-size: var(--fs-lg); font-variant-numeric: tabular-nums; }
+.shop-wallet i { font-style: normal; font-size: var(--fs-xs); color: var(--fg-dim); }
+.shop-wallet-svg { width: 1.1em; height: 1.1em; color: var(--gold); }
+.shop-note { font-size: var(--fs-xs); color: var(--fg-dim); }
+
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: clamp(6px, .8vw, 12px);
+}
+.shop-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: .3em;
+  padding: clamp(7px, 1.1vh, 12px) clamp(8px, .9vw, 13px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, rgba(28, 38, 70, .92), rgba(10, 14, 26, .94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+/* 「立即」角标用伪元素画，不进 DOM 子节点（商店卡的子元素结构保持契约形状） */
+.shop-card.is-immediate::after {
+  content: "立即";
+  position: absolute;
+  top: -.6em;
+  right: .5em;
+  padding: 0 .42em;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  color: #06231a;
+  border-radius: 999px;
+  background: var(--green-lt);
+}
+.shop-icon {
+  display: grid;
+  place-items: center;
+  width: 2.2em;
+  height: 2.2em;
+  color: var(--gold-2);
+  border: 1px solid rgba(255, 212, 121, .3);
+  border-radius: 10px;
+  background: rgba(255, 212, 121, .08);
+}
+.shop-svg { width: 1.3em; height: 1.3em; }
+.shop-name { font-size: var(--fs-sm); font-weight: 800; color: #f2f6ff; }
+.shop-price {
+  display: inline-flex;
+  align-items: center;
+  gap: .25em;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  color: var(--gold-2);
+  font-variant-numeric: tabular-nums;
+}
+.shop-coin { width: 1em; height: 1em; color: var(--gold); }
+.shop-desc { min-height: 2.5em; font-size: var(--fs-xs); line-height: 1.5; color: var(--fg-dim); }
+.shop-owned { font-size: var(--fs-xs); color: var(--fg-dim); }
+.shop-buy {
+  margin-top: auto;
+  padding: .4em .8em;
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  color: #241703;
+  border-color: rgba(255, 231, 160, .7);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffe9ac, var(--gold) 52%, #d29a24);
+}
+.shop-buy:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.07); }
+.shop-buy:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
+.shop-buy:disabled,
+.shop-buy:disabled:hover {
+  color: var(--fg-faint);
+  border-color: #2a3350;
+  background: linear-gradient(180deg, #1a2135, #101527);
+  transform: none;
+  filter: none;
+  opacity: 1;
+}
+.shop-card.is-poor {
+  border-color: rgba(255, 107, 107, .45);
+  background: linear-gradient(180deg, rgba(122, 31, 38, .22), rgba(16, 22, 38, .92));
+}
+.shop-card.is-poor .shop-price { color: #ff9b9b; }
+.shop-card.is-capped { border-style: dashed; border-color: rgba(255, 212, 121, .45); }
+.shop-card.is-capped .shop-owned { color: var(--gold-2); }
+.shop-empty { padding: .8em; font-size: var(--fs-sm); color: var(--fg-dim); text-align: center; }
 
 /* ------------------------------------------------------------------ 浮层 */
 .toast {
@@ -687,13 +1082,56 @@ body[data-state="REVEAL"] #stage { animation: stageGlow .9s ease; }
   100% { filter: brightness(1); }
 }
 
+/* ------------------------------------------------- 大奖彩带（P1，纯装饰） */
+/* 只在「开奖成功且这把进账 ≥100 金币」时由 js/ui.js 的 confetti() 撒一把；
+   .confetti-layer 是 position:absolute 的装饰层，不参与布局、不吃点击。 */
+.confetti-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  width: 7px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--gold-2);
+  opacity: 0;
+  animation: confettiFly .95s cubic-bezier(.22, .7, .3, 1) forwards;
+}
+.confetti[data-tone="1"] { background: var(--cyan); }
+.confetti[data-tone="2"] { background: var(--green-lt); }
+.confetti[data-tone="3"] { background: #ff9e6b; }
+@keyframes confettiFly {
+  0%   { opacity: 0; transform: translate(-50%, 0) rotate(0deg) scale(.7); }
+  14%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), var(--dy, 140px)) rotate(var(--rot, 180deg)) scale(1); }
+}
+
 /* ------------------------------------------------------- 无障碍 / 降级 */
+/* 契约 §4.2⑥：reduced-motion 下「装饰动画全停、功能动画缩短但非 0」。
+   功能动画（门的开合 / HUD 数值高亮 / 飘字 / 弹层入场）统一压到 .24s（>0，看得见但很快）；
+   纯装饰动画（头像呼吸、打字机光标闪烁、舞台灯光、REVEAL 闪光）在下面单独关掉。 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    animation-duration: .001ms !important;
+    animation-duration: .24s !important;
     animation-iteration-count: 1 !important;
-    transition-duration: .05ms !important;
+    animation-delay: 0s !important;
+    transition-duration: .12s !important;
   }
+  /* 装饰性：整条停掉（不保留单次播放） */
+  #narrator.is-speaking .narrator-avatar,
+  #narrator.is-speaking .narrator-text::after,
+  #stage::before,
+  #stage::after,
+  .confetti,
+  .vignette { animation: none !important; transition: none !important; }
+  #narrator.is-speaking .narrator-text::after { opacity: 1 !important; }
+  body[data-state="REVEAL"] #stage { animation: none !important; }
 }
 
 /* 窄屏 / 竖屏：门与决策区换行仍不产生滚动条 */
@@ -729,4 +1167,39 @@ body[data-state="REVEAL"] #stage { animation: stageGlow .9s ease; }
   .door-icon { font-size: clamp(14px, 4.2vh, 34px); }
   .door-name { font-size: var(--fs-sm); }
   .door-tag { min-height: 0; line-height: 1.2; letter-spacing: .04em; }
+
+  /* 矮视口下背包改成左下角横排小条，避免遮住门卡 */
+  .bag {
+    left: var(--pad);
+    top: auto;
+    bottom: var(--pad);
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    max-width: min(60vw, 340px);
+    padding: 4px 6px;
+    transform: none;
+  }
+  .bag.is-empty { width: auto; }
+  .bag-list { flex-direction: row; }
+  .bag-slot { padding: 2px 5px; }
+  .bag-icon { width: 1.2em; height: 1.2em; }
+}
+
+/* 竖屏（≤1:1）：背包整条移动到底部中间上方，避免与叠成三行的门抢横向空间 */
+@media (max-aspect-ratio: 1/1) {
+  .bag {
+    left: 50%;
+    top: auto;
+    bottom: calc(var(--pad) + 42px);
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    max-width: 92vw;
+    transform: translateX(-50%);
+  }
+  .bag.is-empty { width: auto; }
+  .bag-list { flex-direction: row; }
 }

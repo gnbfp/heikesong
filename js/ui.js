@@ -39,6 +39,55 @@
   var RES_LABEL = { coins: '金币', suspicion: '怀疑值', patience: '耐心' };
   var PHASES = { IDLE: 1, ROUND_INTRO: 1, NARRATOR: 1, PICK: 1, HOST_OPEN: 1, DECIDE: 1, REVEAL: 1, SETTLE_ROUND: 1, CASHOUT: 1, GAME_OVER: 1 };
 
+  /* 契约《设计契约_商店与美术》§3.1：#btn-shop 只在 DECIDE / SETTLE_ROUND 可用；
+     #bag 在 IDLE / ROUND_INTRO 隐藏。两者都是纯显示规则，不改状态机。 */
+  var SHOP_PHASES = { DECIDE: 1, SETTLE_ROUND: 1 };
+  var BAG_HIDE_PHASES = { IDLE: 1, ROUND_INTRO: 1 };
+
+  /* 商店 / 背包的道具 id → 图标名（契约 §2.2 的 icon 列）。 */
+  var ITEM_ICON = {
+    switch_ticket: 'ticket',
+    mute_card: 'mute',
+    double_coins: 'double',
+    fuse: 'fuse',
+    mystery_box: 'box',
+    patience_charm: 'charm'
+  };
+
+  /* ---------------------------------------------------------------- 图标 */
+  /* 零外链：图标全部是内联 SVG <symbol>，使用时用 <use href="#ic-*"> 引用。 */
+  var ICON_PATHS = {
+    coins: '<circle cx="12" cy="12" r="7.4"/><path d="M12 8.6v6.8M9.7 10.2h4.6M9.7 13.8h4.6"/>',
+    suspicion: '<path d="M2.6 12S6.2 6.2 12 6.2 21.4 12 21.4 12 17.8 17.8 12 17.8 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.5"/>',
+    patience: '<path d="M12 19.6S5.2 15.4 5.2 10.8A4 4 0 0 1 12 8.1a4 4 0 0 1 6.8 2.7c0 4.6-6.8 8.8-6.8 8.8z"/>',
+    ticket: '<path d="M3.2 8.6a2 2 0 0 0 1.8-1.8h14a2 2 0 0 0 1.8 1.8v6.8a2 2 0 0 0-1.8 1.8H5a2 2 0 0 0-1.8-1.8z"/><path d="M14.4 6.8v10.4" stroke-dasharray="2 2.2"/>',
+    mute: '<path d="M4.2 9.6h2.6l3.6-3.2v11.2l-3.6-3.2H4.2z"/><path d="M15 9.6l4 4.8M19 9.6l-4 4.8"/>',
+    double: '<path d="M5.4 6.8l4.8 5.2-4.8 5.2"/><path d="M12.4 6.8l4.8 5.2-4.8 5.2"/>',
+    fuse: '<rect x="3.6" y="9" width="13" height="6" rx="2.2"/><path d="M16.6 12h3.4M6.6 9V6.2M11 9V6.2"/>',
+    box: '<path d="M4 9.2l8-4 8 4-8 4z"/><path d="M4 9.2V16l8 4 8-4V9.2"/><path d="M12 13.2V20"/>',
+    charm: '<path d="M12 3.4l2.5 5.2 5.6.8-4.1 3.9 1 5.6-5-2.8-5 2.8 1-5.6-4.1-3.9 5.6-.8z"/>'
+  };
+  var ICON_NAMES = ['coins', 'suspicion', 'patience', 'ticket', 'mute', 'double', 'fuse', 'box', 'charm'];
+
+  /** 拼出整份 <symbol> 精灵；只插一次。 */
+  function spriteMarkup() {
+    var out = '<svg id="ui-icons" class="ui-icons" aria-hidden="true" focusable="false" width="0" height="0">';
+    for (var i = 0; i < ICON_NAMES.length; i++) {
+      var n = ICON_NAMES[i];
+      out += '<symbol id="ic-' + n + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+             'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + ICON_PATHS[n] + '</symbol>';
+    }
+    return out + '</svg>';
+  }
+
+  /** 引用精灵里的一个图标；name 未知时返回空串（不报错、不留破图）。 */
+  function iconUse(name, cls) {
+    var n = str(name);
+    if (ICON_NAMES.indexOf(n) < 0) return '';
+    return '<svg class="' + cls + '" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+           '<use href="#ic-' + n + '" xlink:href="#ic-' + n + '"></use></svg>';
+  }
+
   var CHOICE_LABEL = {
     stick: '坚持本门',
     switch: '换门',
@@ -57,7 +106,9 @@
     switch_ticket: { name: '换门券', icon: '🎫' },
     mute_card: { name: '闭嘴卡', icon: '🤐' },
     double_coins: { name: '双倍金币', icon: '✖️' },
-    mystery_box: { name: '神秘盒', icon: '❓' }
+    mystery_box: { name: '神秘盒', icon: '❓' },
+    fuse: { name: '保险丝', icon: '🧯' },
+    patience_charm: { name: '续命符', icon: '🍀' }
   };
 
   /* -------------------------------------------------------------- 模块状态 */
@@ -74,6 +125,10 @@
   var lockTimers = { pick: null, decide: null };
   var last = { phase: 'IDLE', pickedSlot: null, doubled: false, suspicion: 0, peekUsed: false };
   var press = { slot: null, timer: null, fired: false };
+  var bagBound = false;          /* #bag-list 的委托只在第一次装上 */
+  var bagSig = '';               /* 背包内容签名，避免每帧重建 DOM */
+  var iconReady = false;         /* 图标精灵是否已插入（只插一次） */
+  var vignetteReady = false;     /* 舞台暗角层是否已插入（只插一次） */
 
   /* ------------------------------------------------------------------ 工具 */
   function $(id) { return doc && doc.getElementById ? doc.getElementById(id) : null; }
@@ -160,7 +215,7 @@
     osc.stop(t0 + dur + 0.02);
   }
 
-  /** 音效总线：kind ∈ 'click' | 'open' | 'win' | 'lose'；总时长 ≤0.3s，gain ≤0.045。 */
+  /** 音效总线：kind ∈ 'click' | 'open' | 'win' | 'lose' | 'buy'；总时长 ≤0.3s，gain ≤0.045。 */
   function sfx(kind) {
     if (audioMuted()) return;                       /* 静音：不发一个采样 */
     var ctx = armAudio();
@@ -175,6 +230,9 @@
       } else if (kind === 'open') {
         tone(ctx, 'square', 0, 240, 0.07, 0.03);
         tone(ctx, 'square', 0.05, 340, 0.09, 0.026);
+      } else if (kind === 'buy') {
+        tone(ctx, 'sine', 0, 700, 0.07, 0.03);      /* 买下：两枚小金币的脆响 */
+        tone(ctx, 'triangle', 0.06, 1050, 0.11, 0.028);
       } else {
         tone(ctx, 'sine', 0, 520, 0.06, 0.028);
       }
@@ -272,6 +330,7 @@
     dom.modeChip = $('mode-chip');
     dom.btnReset = $('btn-reset');
     dom.btnDemo = $('btn-demo');
+    dom.btnShop = $('btn-shop');
     dom.btnMute = $('btn-mute');
     dom.btnSkip = $('btn-skip');
     dom.controls = $('controls');
@@ -287,6 +346,10 @@
     dom.hudSuspicion = $('hud-suspicion');
     dom.hudPatience = $('hud-patience');
     dom.decide = $('decide');
+    dom.bag = $('bag');
+    dom.bagTitle = $('bag-title');
+    dom.bagList = $('bag-list');
+    dom.bagEmpty = $('bag-empty');
     dom.boot = $('boot');
     dom.btnStart = $('btn-start');
     dom.btnStartNormal = $('btn-start-normal');
@@ -606,12 +669,14 @@
     var ctrl = [
       [D.btnReset, 'reset'],
       [D.btnDemo, 'toggle_demo'],
+      [D.btnShop, 'shop'],
       [D.btnMute, 'toggle_mute'],
       [D.btnSkip, 'skip_anim']
     ];
     for (var i = 0; i < ctrl.length; i++) {
       (function (pair) {
         on(pair[0], 'click', function () {
+          if (pair[0] && pair[0].disabled) return;      /* 结构性不可用：非 DECIDE/SETTLE_ROUND 的商店 */
           var act = pair[1];
           if (act === 'toggle_mute') {
             /* 先切状态再发声：静音瞬间不响，解除静音有轻点反馈 */
@@ -637,8 +702,21 @@
       for (var k = 0; k < list.length; k++) { if (list[k].name === 'narrator') list[k].finish(); }
     });
 
-    /* --- 弹层：背景点击（仅无按钮的信息弹层）/ ESC / Tab 焦点环 --- */
-    on(D.modal, 'click', function (e) { if (e.target === D.modal && modalActions === 0) UI.closeModal(); });
+    /* --- 弹层：商店购买（事件委托）/ 背景点击（仅无按钮的信息弹层）/ ESC / Tab 焦点环 --- */
+    on(D.modal, 'click', function (e) {
+      var buy = closest(e.target, '.shop-buy');
+      if (buy && D.modal && D.modal.contains(buy)) {
+        if (buy.disabled || buy.getAttribute('aria-disabled') === 'true') {
+          sfx('click');
+          UI.toast(buy.getAttribute('data-hint') || '现在买不了');
+          return;
+        }
+        sfx('buy');
+        emit({ type: 'modal_choice', choice: 'buy:' + buy.getAttribute('data-item') });
+        return;
+      }
+      if (e.target === D.modal && modalActions === 0) UI.closeModal();
+    });
     on(doc, 'keydown', function (e) {
       var key = e.key || '';
       if (key === 'Escape' || e.keyCode === 27) {
@@ -702,6 +780,12 @@
     if (D.hudCoins) D.hudCoins.title = '金币：游戏内虚拟数值，非真实货币';
     if (D.hudSuspicion) D.hudSuspicion.title = '怀疑值：质疑旁白消耗 ' + suspicionCost() + ' 点';
     if (D.hudPatience) D.hudPatience.title = '耐心：归零即结束本局';
+    /* HUD 卡片化（契约 §4.2③）：补内联 SVG 图标，只补一次；数字变化仍走 UI.flash */
+    ensureIconSprite();
+    ensureVignette();
+    decorateHud('coins', D.hudCoins);
+    decorateHud('suspicion', D.hudSuspicion);
+    decorateHud('patience', D.hudPatience);
 
     /* 三扇门（仅 PICK 相位可点；REVEAL/NARRATOR/HOST_OPEN/ROUND_INTRO 等一律锁定） */
     var els = ensureDoors();
@@ -760,6 +844,9 @@
     /* 旁白：动画进行中不抢文本 */
     toggle(D.narrator, 'is-speaking', speaking);
     if (D.narratorText && !speaking && !str(D.narratorText.textContent)) text(D.narratorText, '……');
+
+    /* 背包（契约 §3.1/§3.4）：IDLE / ROUND_INTRO 隐藏，其余相位只读渲染 */
+    renderBag(s, phase);
 
     UI.setControls(s);
 
@@ -838,6 +925,255 @@
   /** 便捷口：直接写 #stage-hint。 */
   UI.hint = function (t) { text(d().stageHint, t); };
 
+  /* ------------------------------------------------- 图标精灵 / HUD 卡片化 */
+  /** 把 <symbol> 精灵插进 body 一次；容器 0×0 且 position:absolute，不参与布局。 */
+  function ensureIconSprite() {
+    if (iconReady) return;
+    var D = d();
+    if (!D.body || !doc.createElement) return;
+    if ($('ui-icons')) { iconReady = true; return; }
+    var host = doc.createElement('div');
+    host.className = 'ui-icons-host';
+    host.setAttribute('aria-hidden', 'true');
+    host.innerHTML = spriteMarkup();
+    D.body.appendChild(host);
+    iconReady = true;
+  }
+
+  /** 舞台暗角（契约 §4.2②）：index.html 没有就自建；纯装饰层，pointer-events:none。 */
+  function ensureVignette() {
+    if (vignetteReady) return;
+    var D = d();
+    if (!D.body || !doc.createElement) return;
+    if ($('vignette')) { vignetteReady = true; return; }
+    var v = doc.createElement('div');
+    v.setAttribute('id', 'vignette');
+    v.className = 'vignette';
+    v.setAttribute('aria-hidden', 'true');
+    D.body.appendChild(v);
+    vignetteReady = true;
+  }
+
+  /** 大奖彩带（P1，纯装饰）：撒一把 CSS 彩带，1.4s 后自己收干净。
+      只为「演出感」服务 —— 不读也不写 state，动画在 reduced-motion 下由 CSS 整条关掉。 */
+  function confetti() {
+    var D = d();
+    if (!D.stage || !doc.createElement || !D.stage.appendChild) return;
+    var host = doc.createElement('div');
+    host.className = 'confetti-layer';
+    host.setAttribute('aria-hidden', 'true');
+    for (var i = 0; i < 18; i++) {
+      var bit = doc.createElement('i');
+      bit.className = 'confetti';
+      bit.setAttribute('data-tone', String(i % 4));
+      bit.setAttribute('style',
+        '--dx:' + ((i * 37 % 220) - 110) + 'px;' +
+        '--dy:' + (70 + (i * 53 % 130)) + 'px;' +
+        '--rot:' + ((i * 71 % 540) - 270) + 'deg;' +
+        'animation-delay:' + ((i % 6) * 40) + 'ms');
+      host.appendChild(bit);
+    }
+    D.stage.appendChild(host);
+    later(1400, function () {
+      if (host.parentNode && host.parentNode.removeChild) host.parentNode.removeChild(host);
+      else if (D.stage.removeChild) D.stage.removeChild(host);
+    });
+  }
+
+  /** HUD 卡片化（契约 §4.2③）：给三张卡片补一个内联 SVG 图标，只补一次。 */
+  function decorateHud(res, el) {
+    if (!el || !doc.createElement) return;
+    if (el.querySelector && el.querySelector('.hud-icon')) return;
+    var span = doc.createElement('span');
+    span.className = 'hud-icon';
+    span.setAttribute('aria-hidden', 'true');
+    span.innerHTML = iconUse(res, 'hud-svg');
+    if (el.insertBefore) el.insertBefore(span, el.firstChild);
+    else el.appendChild(span);
+  }
+
+  /* ------------------------------------------------------------- 背包渲染 */
+  /** #bag / #bag-list 缺失时自建（契约 §3.1 的结构逐字一致），不依赖 index.html。 */
+  function ensureBag() {
+    var D = d();
+    if (!D.bag) D.bag = $('bag');
+    if (!D.bag && D.body && doc.createElement) {
+      var sec = doc.createElement('section');
+      sec.setAttribute('id', 'bag');
+      sec.className = 'bag';
+      sec.setAttribute('aria-label', '背包');
+      sec.hidden = true;
+      sec.innerHTML = '<div id="bag-title" class="bag-title">背包</div>' +
+                      '<div id="bag-list" class="bag-list"></div>' +
+                      '<div id="bag-empty" class="bag-empty">背包空空如也</div>';
+      D.body.appendChild(sec);
+      D.bag = sec;
+    }
+    if (!D.bagList) D.bagList = $('bag-list');
+    if (!D.bagEmpty) D.bagEmpty = $('bag-empty');
+    if (!D.bagTitle) D.bagTitle = $('bag-title');
+    if (!bagBound) {
+      bagBound = true;
+      on(D.bagList, 'click', function (e) {
+        var btn = closest(e.target, '.bag-slot');
+        if (!btn || !D.bagList || !D.bagList.contains(btn)) return;
+        if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
+          sfx('click');
+          UI.toast(btn.getAttribute('data-hint') || '现在不能使用道具');
+          return;
+        }
+        sfx('click');
+        emit({ type: 'use_item', id: btn.getAttribute('data-item') });
+      });
+    }
+    return D.bag;
+  }
+
+  /** state.items → [{id,count,view}]；脏数据就地过滤，绝不写 state。 */
+  function bagItems(state) {
+    var arr = state && state.items;
+    var out = [];
+    if (!arr || !arr.length) return out;
+    for (var i = 0; i < arr.length; i++) {
+      var it = arr[i];
+      if (!it) continue;
+      var id = str(it.id || it.itemId);
+      var c = Math.round(num(it.count, 0));
+      if (!id || c <= 0) continue;
+      out.push({ id: id, count: c, view: itemView(id) });
+    }
+    return out;
+  }
+
+  function renderBag(state, phase) {
+    var D = d();
+    var bag = ensureBag();
+    if (!bag) return;
+    var hide = !!BAG_HIDE_PHASES[phase];
+    bag.hidden = hide;
+    if (hide) return;
+
+    var list = bagItems(state);
+    var usable = phase === 'DECIDE';      /* 契约 §3.4：只有决策阶段能点使用 */
+    var sig = phase + '|' + usable + '|';
+    for (var i = 0; i < list.length; i++) sig += list[i].id + 'x' + list[i].count + ',';
+    if (sig !== bagSig && D.bagList && doc.createElement) {
+      bagSig = sig;
+      clear(D.bagList);
+      for (var j = 0; j < list.length; j++) {
+        var it = list[j];
+        var hint = usable ? ('使用「' + it.view.name + '」') : '只有决策阶段能使用道具';
+        var btn = doc.createElement('button');
+        btn.type = 'button';
+        btn.className = 'bag-slot';
+        btn.setAttribute('data-item', it.id);
+        btn.setAttribute('data-count', String(it.count));
+        btn.disabled = !usable;
+        btn.setAttribute('aria-disabled', usable ? 'false' : 'true');
+        btn.setAttribute('data-hint', hint);
+        btn.title = hint;
+        btn.setAttribute('aria-label', it.view.name + ' ×' + it.count + (usable ? '，点击使用' : '，决策阶段可用'));
+        btn.innerHTML =
+          '<span class="bag-icon" aria-hidden="true">' + iconUse(shopIconOf(it.id), 'bag-svg') + '</span>' +
+          '<span class="bag-name">' + esc(it.view.name) + '</span>' +
+          '<span class="bag-count">×' + it.count + '</span>';
+        D.bagList.appendChild(btn);
+      }
+    }
+    if (D.bagEmpty) D.bagEmpty.hidden = list.length > 0;
+    toggle(bag, 'is-empty', list.length === 0);
+  }
+
+  /* ------------------------------------------------------------- 商店渲染 */
+  function shopIconOf(id) { return ITEM_ICON[str(id)] || ''; }
+
+  /** 卡片里的持有量文案（契约 v2 §2.4）：
+      cap 是数字 → 「已有 ×1/3」；cap 是 null（不限购）→ 「已买 ×2」，绝不拼出 ×1/null。 */
+  function ownedText(owned, cap) {
+    if (typeof cap === 'number') return '已有 ×' + owned + '/' + cap;
+    return '已买 ×' + owned;
+  }
+
+  /** 弹层正文里的说明文字（契约 §3.3 的 spec.body，可能是 HTML）。 */
+  function noteNode(body) {
+    var el = doc.createElement('span');
+    el.className = 'shop-note';
+    if (body == null) return el;
+    var s = str(body);
+    /* 去掉正文里重复的金币数字（金币由 .shop-wallet 实时显示） */
+    s = s.replace(/^金币\s*\d+\s*·\s*/, '');
+    if (s.indexOf('<') >= 0) el.innerHTML = s;
+    else el.textContent = s;
+    return el;
+  }
+
+  /**
+   * 商店弹层（契约 §3.3 / v2 §2.4）：#shop-grid > .shop-card[data-item]。
+   * 置灰只看引擎给的 `capped === true`（不再自己算 owned>=cap —— v2 里它还涵盖
+   * 「即时商品买满单局上限」「续命符在耐心已到顶时的空操作保护」两种情况）；
+   * 买不起看 `affordable === false` → .is-poor。
+   * 点购买 → emit({type:'modal_choice', choice:'buy:<id>'}).
+   */
+  function renderShop(spec) {
+    var D = d();
+    spec = spec || {};
+    if (!D.modalBody || !doc.createElement) return;
+    ensureIconSprite();
+    if (spec.title != null) text(D.modalTitle, str(spec.title));
+
+    clear(D.modalBody);
+    var head = doc.createElement('div');
+    head.className = 'shop-head';
+    var wallet = doc.createElement('span');
+    wallet.className = 'shop-wallet';
+    var coins = spec.coins == null ? Math.round(num(liveState().coins, 0)) : Math.round(num(spec.coins, 0));
+    wallet.innerHTML = iconUse('coins', 'shop-wallet-svg') + '<b>' + coins + '</b><i>金币</i>';
+    head.appendChild(wallet);
+    head.appendChild(noteNode(spec.body));
+    D.modalBody.appendChild(head);
+
+    var grid = doc.createElement('div');
+    grid.setAttribute('id', 'shop-grid');
+    grid.className = 'shop-grid';
+    var items = (spec.items && spec.items.length) ? spec.items : [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      var id = str(it.id);
+      var price = Math.round(num(it.price, 0));
+      var owned = Math.round(num(it.owned, 0));
+      var cap = (it.cap == null) ? null : Math.round(num(it.cap, 0));   // null = 不限购（神秘盒）
+      var poor = it.affordable === false;
+      var capped = it.capped === true;                                  // 契约 v2：由引擎裁定
+      var card = doc.createElement('div');
+      card.className = 'shop-card' + (poor ? ' is-poor' : '') + (capped ? ' is-capped' : '') +
+                       (it.immediate ? ' is-immediate' : '');
+      card.setAttribute('data-item', id);
+      if (it.kind != null) card.setAttribute('data-kind', str(it.kind));
+      card.setAttribute('role', 'group');
+      card.setAttribute('aria-label', str(it.name || id) + '，' + price + ' 金币');
+      card.innerHTML =
+        '<div class="shop-icon" aria-hidden="true">' + iconUse(str(it.icon) || shopIconOf(id) || 'box', 'shop-svg') + '</div>' +
+        '<div class="shop-name">' + esc(it.name || id) + '</div>' +
+        '<div class="shop-price">' + iconUse('coins', 'shop-coin') + price + '</div>' +
+        '<div class="shop-desc">' + esc(it.desc || '') + '</div>' +
+        '<div class="shop-owned">' + esc(ownedText(owned, cap)) + '</div>' +
+        '<button type="button" class="shop-buy" data-item="' + esc(id) + '"' +
+          (poor || capped ? ' disabled aria-disabled="true"' : '') +
+          /* 提示语优先级：capped 优先于 poor —— 已满的卡即使有钱也买不了，
+             先说「已达上限」才不会让玩家以为攒够金币就能买到。 */
+          ' data-hint="' + esc(capped ? '已达上限，暂时买不了' : (poor ? ('金币不够：需要 ' + price + '，现有 ' + coins) : ('花 ' + price + ' 金币买下'))) + '"' +
+          '>' + (capped ? '已满' : '购买') + '</button>';
+      grid.appendChild(card);
+    }
+    D.modalBody.appendChild(grid);
+    if (!items.length) {
+      var empty = doc.createElement('div');
+      empty.className = 'shop-empty';
+      empty.textContent = '货架暂时是空的。';
+      D.modalBody.appendChild(empty);
+    }
+  }
+
   /* --------------------------------------------------------------- 弹层 */
   function setModalBody(body) {
     var el = d().modalBody;
@@ -882,12 +1218,13 @@
         D.modalActions.appendChild(btn);
       })(acts[i]);
     }
+    var kind = str(spec.kind);
+    if (kind === 'shop') renderShop(spec);          /* 契约 §3.3：商店弹层自己渲染 #shop-grid */
     D.modal.className = 'modal kind-' + str(spec.kind || 'info');
     D.modal.hidden = false;
     toggle(D.modal, 'is-open', true);
     toggle(D.body, 'has-modal', true);
-    var kind = str(spec.kind);
-    sfx(kind === 'gameover' ? 'lose' : (kind === 'cashout' ? 'win' : 'click'));
+    sfx(kind === 'gameover' ? 'lose' : (kind === 'cashout' ? 'win' : (kind === 'shop' ? 'open' : 'click')));
     var first = D.modalActions.querySelector ? D.modalActions.querySelector('button') : null;
     if (first && first.focus) { try { first.focus(); } catch (e) { /* noop */ } }
   };
@@ -1036,6 +1373,8 @@
       }
       sfx(outcome);
       applyDeltas();
+      /* 大奖时刻撒彩带（P1 装饰）：进账 ≥100 金币才算「大奖」 */
+      if (outcome === 'win' && Math.round(num(deltas.coins, 0)) >= 100) confetti();
       UI.banner(line, mult > 1 ? 2100 : 1700);
       if (dt) UI.toast(line);
     }
@@ -1094,6 +1433,17 @@
       D.btnDemo.title = '当前：' + (demo ? '演示模式（固定剧本）' : '普通模式（随机）') + ' · 点击切换';
       toggle(D.btnDemo, 'is-on', demo);
     }
+    /* 商店（契约 §3.1）：只有 DECIDE / SETTLE_ROUND 可点，其余相位结构性禁用 */
+    var phase = PHASES[str(s.phase)] ? str(s.phase) : 'IDLE';
+    if (D.btnShop) {
+      var shopOn = !!SHOP_PHASES[phase];
+      D.btnShop.disabled = !shopOn;
+      D.btnShop.setAttribute('aria-disabled', shopOn ? 'false' : 'true');
+      D.btnShop.title = shopOn
+        ? '道具商店：花金币买道具（金币会真的扣掉）'
+        : '道具商店：只有决策阶段（或结算时）才能进';
+      toggle(D.btnShop, 'is-on', shopOn);
+    }
     if (D.btnMute) {
       text(D.btnMute, muted ? '已静音' : '静音');
       D.btnMute.setAttribute('aria-pressed', muted ? 'true' : 'false');
@@ -1115,7 +1465,7 @@
   };
 
   /* --------------------------------------------------------------- 启动自检 */
-  UI.version = 'stage1-ui/1.1';
+  UI.version = 'stage2-ui/2.0';
   try { cacheDom(); } catch (e) { logErr('cacheDom', e); }
 
   root.UI = UI;
