@@ -315,6 +315,374 @@ ck.ok('U8.2', page.has('js/ui.js') && page.has('js/game.js') && page.has('js/sta
   page.has('js/effects.js') && page.has('js/narrator.js'),
   '6 个脚本都以经典脚本方式在页面上下文里执行成功（无 ES module / 无构建）');
 
+ck.section('阶段 3/4 P0｜商店 DOM 契约（#btn-shop / #shop-grid / .shop-card / .is-poor / #bag）');
+
+var shopBtn = byId('btn-shop');
+ck.ok('U10.1', !!shopBtn && shopBtn.textContent.trim() === '商店' && shopBtn.getAttribute('class').indexOf('ctrl-shop') >= 0,
+  '#btn-shop 存在、文案「商店」且带 .ctrl-shop',
+  shopBtn ? ('class="' + shopBtn.getAttribute('class') + '" text="' + shopBtn.textContent.trim() + '"') : 'none');
+
+/* 决策/结算阶段可用；其它阶段结构性禁用（契约 §3.1） */
+var realPhase = Game.state.phase;
+ck.ok('U10.2', (realPhase === 'DECIDE' || realPhase === 'SETTLE_ROUND') && shopBtn.disabled === false &&
+  shopBtn.getAttribute('aria-disabled') === 'false',
+  'DECIDE/SETTLE_ROUND 阶段 #btn-shop 可用（当前 phase=' + realPhase + '）',
+  'disabled=' + shopBtn.disabled + ' aria=' + shopBtn.getAttribute('aria-disabled'));
+
+var fakePick = SANDBOX.cloneState(Game.state);
+fakePick.phase = 'PICK';
+UI.render(fakePick);
+ck.ok('U10.3', shopBtn.disabled === true && shopBtn.getAttribute('aria-disabled') === 'true',
+  'PICK 阶段 #btn-shop 结构性禁用（disabled + aria-disabled=true）',
+  'disabled=' + shopBtn.disabled + ' aria=' + shopBtn.getAttribute('aria-disabled'));
+UI.render(Game.state);
+
+var bagNow = byId('bag');
+ck.ok('U10.4', !!bagNow && bagNow.hidden === false && byId('bag-list') !== null,
+  '非 IDLE/ROUND_INTRO 阶段 #bag 可见且含 #bag-list',
+  'hidden=' + (bagNow && bagNow.hidden));
+var fakeIdle = SANDBOX.cloneState(Game.state);
+fakeIdle.phase = 'IDLE';
+UI.render(fakeIdle);
+ck.ok('U10.5', byId('bag').hidden === true, 'IDLE 阶段 #bag 隐藏（契约 §3.1）', 'hidden=' + byId('bag').hidden);
+UI.render(Game.state);
+
+/* 点 #btn-shop 走真实事件链：UI.emit → Game.action({type:'shop'}) → #shop-grid */
+page.fire(shopBtn, 'click', {});
+var grid = byId('shop-grid');
+var cards = grid ? qa('#shop-grid .shop-card') : [];
+ck.ok('U10.6', byId('modal').hidden === false && byId('modal').className.indexOf('kind-shop') >= 0 && !!grid,
+  '点 #btn-shop 真的打开商店弹层（#modal.kind-shop + #shop-grid）',
+  'modal=' + byId('modal').className + ' grid=' + !!grid);
+ck.eq('U10.7', cards.length, 6, '商店弹层渲染 6 件商品 .shop-card');
+var itemAttrs = cards.map(function (el) { return el.getAttribute('data-item'); }).join(',');
+ck.ok('U10.8', itemAttrs === 'switch_ticket,mute_card,double_coins,fuse,mystery_box,patience_charm',
+  '6 个 .shop-card[data-item] 的 id 与契约 §2.2 顺序一致（' + itemAttrs + '）');
+var buyBtns = qa('#shop-grid .shop-buy');
+ck.ok('U10.9', buyBtns.length === 6 && buyBtns.every(function (b) { return !!b.getAttribute('data-item'); }),
+  '每张卡都有一个 .shop-buy[data-item] 购买按钮');
+
+/* 买不起 → .is-poor + 按钮禁用（UI 不依赖人眼判断） */
+Game.state.coins = 10;
+UI.render(Game.state);
+UI.openModal(Game.shopSpec());
+var poorCards = qa('#shop-grid .shop-card.is-poor');
+var poorBtnsOk = poorCards.every(function (c) { return c.querySelector('.shop-buy').disabled === true; });
+var richCab = q('#shop-grid .shop-card[data-item="switch_ticket"]');
+ck.ok('U10.10', poorCards.length === 6 && poorBtnsOk && richCab.className.indexOf('is-poor') >= 0,
+  '金币 10 时 6 张卡全部 .is-poor 且 .shop-buy 禁用（' + poorCards.length + ' 张）',
+  'poor=' + poorCards.length + ' 全部按钮禁用=' + poorBtnsOk);
+
+/* 买得起 → 真实点击购买：金币减少 + HUD 刷新 + 背包出现道具 */
+Game.state.coins = 100;
+UI.render(Game.state);
+UI.openModal(Game.shopSpec());
+var buySwitch = q('#shop-grid .shop-buy[data-item="switch_ticket"]');
+ck.ok('U10.11', !!buySwitch && buySwitch.disabled === false, '金币 100 时换门券按钮可点（未禁用）');
+page.fire(buySwitch, 'click', {});
+ck.eq('U10.12', Game.state.coins, 75, '点 .shop-buy 真实购买：金币 100→75（UI.emit → modal_choice:"buy:switch_ticket"）');
+ck.eq('U10.13', hudText('hud-coins'), '75', '购买后 HUD 金币立即刷新为 75');
+var bagSlots = qa('#bag-list .bag-slot');
+ck.ok('U10.14', bagSlots.length === 1 && /换门券/.test(bagSlots[0].textContent || ''),
+  '背包 #bag-list 出现 1 个 .bag-slot 且写明「换门券」',
+  bagSlots.length ? bagSlots[0].textContent.replace(/\s+/g, ' ').slice(0, 60) : '0 个');
+ck.ok('U10.15', Game.state.spentCoins === 25 && Game.state.shopBuys === 1 &&
+  Game._itemCount('switch_ticket') === 1 && Object.keys(Game.state.shopBought || {}).length === 0,
+  '购买计入 spentCoins=25 / shopBuys=1，换门券进背包（_itemCount=1）；shopBought 只统计即时商品（神秘盒/续命符）故为空',
+  JSON.stringify({ spent: Game.state.spentCoins, buys: Game.state.shopBuys,
+    bagCount: Game._itemCount('switch_ticket'), shopBought: Game.state.shopBought }));
+
+ck.section('阶段 6 P0｜六档分辨率：DOM 完整性 + CSS 流式/不溢出静态自证');
+
+var VIEWPORTS = [[1280, 720], [1920, 1080], [1366, 768], [1366, 657], [2560, 1440], [667, 375]];
+var vpBad = [];
+VIEWPORTS.forEach(function (v) {
+  var w = v[0], h = v[1];
+  var got = page.setViewport(w, h);
+  UI.render(Game.state);
+  var problems = [];
+  if (got.width !== w || got.height !== h) problems.push('视口桩未生效');
+  if (SANDBOX.innerWidth !== w || SANDBOX.innerHeight !== h) problems.push('window.innerWidth/Height 不符');
+  if (qa('#doors .door').length !== 3) problems.push('#doors 不是 3 扇门');
+  ['topbar', 'stage', 'narrator', 'hud', 'doors'].forEach(function (id) {
+    var el = byId(id);
+    if (!el) problems.push('缺少 #' + id);
+    else if (el.hidden === true) problems.push('#' + id + ' 被隐藏');
+  });
+  if (!byId('btn-shop')) problems.push('缺少 #btn-shop');
+  if (!q('#decide .decide-btn[data-choice="cashout"]')) problems.push('缺少收手按钮');
+  if (problems.length) vpBad.push(w + '×' + h + ': ' + problems.join('/'));
+});
+ck.ok('U10.16', vpBad.length === 0,
+  '六档分辨率（' + VIEWPORTS.map(function (v) { return v.join('×'); }).join(' / ') + '）下三扇门/顶栏/舞台/旁白/HUD/决策/商店按钮全部在位且未被隐藏',
+  vpBad.join(' | ') || '全部在位');
+ck.ok('U10.17', SANDBOX.innerWidth === 667 && SANDBOX.innerHeight === 375,
+  '视口桩真的可切换（最后一次 667×375 已生效，innerWidth=' + SANDBOX.innerWidth + '）');
+page.setViewport(1280, 720);
+UI.render(Game.state);
+
+/* 像素级 scrollHeight<=innerHeight 需要 CSS 引擎（本沙箱无浏览器），这里做静态自证 + 反模式扫描。 */
+var cssTxt = L.readText(require('path').join(L.ROOT, 'style.css'));
+var cssProblems = [];
+if (!/overflow\s*:\s*hidden/.test(cssTxt)) cssProblems.push('缺少 overflow:hidden');
+if (!/height\s*:\s*100dvh/.test(cssTxt)) cssProblems.push('缺少 height:100dvh');
+if (!/height\s*:\s*100vh/.test(cssTxt)) cssProblems.push('缺少 height:100vh 兜底');
+if (!/min-height\s*:\s*0/.test(cssTxt)) cssProblems.push('缺少 min-height:0（flex 轨道可收缩）');
+var fixHeights = [];
+cssTxt.replace(/\/\*[\s\S]*?\*\//g, '').replace(/([^{}]+)\{([^{}]*)\}/g, function (_, sel, body) {
+  var s = sel.trim();
+  if (!/(^|[,\s])(html|body|#topbar|#stage|#narrator|#hud|#decide|#bag|\.doors)([,\s{]|$)/.test(s + ' ')) return '';
+  var m2 = /(?:^|[;\s])height\s*:\s*(\d+)px/.exec(body);
+  if (m2 && Number(m2[1]) > 200) fixHeights.push(s.split('\n').pop().trim() + ' height:' + m2[1] + 'px');
+  return '';
+});
+if (fixHeights.length) cssProblems.push('主框架固定高度 ' + fixHeights.join('; '));
+ck.ok('U10.18', cssProblems.length === 0,
+  'style.css 静态自证：html/body overflow:hidden + 外壳 height:100dvh(100vh 兜底) + 轨道 min-height:0，且主框架无固定 px 高度',
+  cssProblems.join(' | ') || ('style.css ' + cssTxt.length + ' 字节；像素级 scrollHeight 需真实浏览器'));
+ck.ok('U10.19', /clamp\(/.test(cssTxt) && (cssTxt.match(/clamp\(/g) || []).length >= 30,
+  'style.css 用 clamp() 流式尺寸适配六档（实测 ' + (cssTxt.match(/clamp\(/g) || []).length + ' 处 clamp()）');
+
+/* ---------- 契约 §3.1 / §3.3 的结构与属性（dom-smoke 被契约点名要断言的部分） ---------- */
+var bagSlot = q('#bag-list .bag-slot[data-item="switch_ticket"]');
+ck.ok('U10.20', !!bagSlot && bagSlot.getAttribute('data-count') === '1' &&
+  !!bagSlot.querySelector('.bag-icon') && !!bagSlot.querySelector('.bag-name') && !!bagSlot.querySelector('.bag-count') &&
+  bagSlot.querySelector('.bag-name').textContent === '换门券' && bagSlot.querySelector('.bag-count').textContent === '×1' &&
+  byId('bag-empty').hidden === true,
+  '契约 §3.1：.bag-slot 带 data-item/data-count 且内含 .bag-icon/.bag-name(换门券)/.bag-count(×1)；有道具时 #bag-empty 隐藏',
+  bagSlot ? ('data-item=' + bagSlot.getAttribute('data-item') + ' data-count=' + bagSlot.getAttribute('data-count')) : 'none');
+
+var decideState = SANDBOX.cloneState(Game.state);
+decideState.phase = 'DECIDE';
+UI.render(decideState);
+var slotDecide = q('#bag-list .bag-slot[data-item="switch_ticket"]');
+var bagUsable = !!slotDecide && slotDecide.disabled === false && slotDecide.getAttribute('aria-disabled') === 'false';
+UI.render(Game.state);
+var pickState = SANDBOX.cloneState(Game.state);
+pickState.phase = 'PICK';
+UI.render(pickState);
+var slotPick = q('#bag-list .bag-slot[data-item="switch_ticket"]');
+var bagLocked = !!slotPick && slotPick.disabled === true && slotPick.getAttribute('aria-disabled') === 'true';
+UI.render(Game.state);
+ck.ok('U10.21', bagUsable && bagLocked,
+  '契约 §3.4：.bag-slot 只在 DECIDE 阶段可点（DECIDE 可点=' + bagUsable + '，PICK 禁用=' + bagLocked + '）');
+
+var emptyBagState = SANDBOX.cloneState(Game.state);
+emptyBagState.phase = 'DECIDE';
+emptyBagState.items = [];
+UI.render(emptyBagState);
+var bagEmptyOk = byId('bag-empty').hidden === false && qa('#bag-list .bag-slot').length === 0 &&
+  byId('bag').getAttribute('class').indexOf('is-empty') >= 0;
+UI.render(Game.state);
+ck.ok('U10.22', bagEmptyOk, '契约 §3.1：空背包显示 #bag-empty 且 #bag-list 无 .bag-slot');
+
+Game.state.coins = 100;
+UI.render(Game.state);
+UI.openModal(Game.shopSpec());
+var cardKids = ['shop-icon', 'shop-name', 'shop-price', 'shop-desc', 'shop-owned'];
+var missKids = [];
+qa('#shop-grid .shop-card').forEach(function (c) {
+  cardKids.forEach(function (k) { if (!c.querySelector('.' + k)) missKids.push(c.getAttribute('data-item') + ' 缺 .' + k); });
+});
+ck.ok('U10.23', missKids.length === 0,
+  '契约 §3.3：每张 .shop-card 都含 .shop-icon/.shop-name/.shop-price/.shop-desc/.shop-owned',
+  missKids.join('; ') || '6 张卡全部齐全');
+
+var ownSwitch = q('#shop-grid .shop-card[data-item="switch_ticket"] .shop-owned');
+var ownMystery = q('#shop-grid .shop-card[data-item="mystery_box"] .shop-owned');
+ck.ok('U10.24', !!ownSwitch && /已有\s*×1\/3/.test(ownSwitch.textContent) &&
+  !!ownMystery && /已买\s*×0/.test(ownMystery.textContent),
+  '契约 §3.3：cap 是数字时写「已有 ×n/cap」、cap===null（不限购）写「已买 ×n」',
+  (ownSwitch ? ownSwitch.textContent.trim() : '?') + ' | ' + (ownMystery ? ownMystery.textContent.trim() : '?'));
+
+/* 买满上限 → .is-capped + 按钮禁用 + 文案「已满」 */
+var capStateItems = SANDBOX.cloneState(Game.state);
+capStateItems.items = [{ id: 'switch_ticket', count: 3 }];
+Game.state.items = capStateItems.items;
+UI.render(Game.state);
+UI.openModal(Game.shopSpec());
+var cappedCard = q('#shop-grid .shop-card[data-item="switch_ticket"]');
+var cappedOk = !!cappedCard && cappedCard.getAttribute('class').indexOf('is-capped') >= 0 &&
+  cappedCard.querySelector('.shop-buy').disabled === true &&
+  cappedCard.querySelector('.shop-buy').textContent.trim() === '已满' &&
+  /已有\s*×3\/3/.test(cappedCard.querySelector('.shop-owned').textContent);
+ck.ok('U10.25', cappedOk, '契约 §3.3：买满上限的卡加 .is-capped、按钮 disabled 且文案「已满」',
+  cappedCard ? (cappedCard.getAttribute('class') + ' | ' + cappedCard.querySelector('.shop-buy').textContent.trim() + ' | ' + cappedCard.querySelector('.shop-owned').textContent.trim()) : 'none');
+
+UI.openModal({ kind: 'shop', title: '道具商店', body: '测试空货架', coins: 100, items: [], actions: [{ label: '关闭', choice: 'close' }] });
+ck.ok('U10.26', byId('modal').hidden === false && qa('#shop-grid .shop-card').length === 0 &&
+  !!q('.shop-empty') && /货架暂时是空的/.test(q('.shop-empty').textContent),
+  '契约 §3.3：items 为空时渲染 .shop-empty「货架暂时是空的。」', 'empty=' + (q('.shop-empty') ? q('.shop-empty').textContent.trim() : 'none'));
+Game.state.items = [];
+UI.closeModal();
+
+/* ============================ U11 对比度（脚本实算 WCAG，不拍脑袋） ============================ */
+ck.section('阶段 4.5 P0｜对比度脚本实算（WCAG 相对亮度，含 .shop-price / .bag-name）');
+
+var CSSX = (function () {
+  var txt = L.readText(require('path').join(L.ROOT, 'style.css')).replace(/\/\*[\s\S]*?\*\//g, '');
+  var rootVars = {}, rules = [];
+  var rm = /:root\s*\{([^{}]*)\}/.exec(txt);
+  if (rm) rm[1].split(';').forEach(function (d) {
+    var i = d.indexOf(':'); if (i > 0) rootVars[d.slice(0, i).trim()] = d.slice(i + 1).trim();
+  });
+  var re = /([^{}]+)\{([^{}]*)\}/g, mm;
+  while ((mm = re.exec(txt))) rules.push({ sel: mm[1].trim().replace(/\s+/g, ' '), body: mm[2] });
+
+  function varOf(v) {
+    var s = String(v == null ? '' : v);
+    for (var k = 0; k < 4 && /var\(/.test(s); k++) s = s.replace(/var\(\s*(--[\w-]+)[^)]*\)/g, function (_, n) {
+      return rootVars[n] != null ? rootVars[n] : '';
+    });
+    return s.trim();
+  }
+  function rgbOf(str) {
+    var s = varOf(str);
+    var m = /^#([0-9a-f]{3})$/i.exec(s);
+    if (m) return { r: parseInt(m[1][0] + m[1][0], 16), g: parseInt(m[1][1] + m[1][1], 16), b: parseInt(m[1][2] + m[1][2], 16), a: 1 };
+    m = /^#([0-9a-f]{6})$/i.exec(s);
+    if (m) return { r: parseInt(m[1].slice(0, 2), 16), g: parseInt(m[1].slice(2, 4), 16), b: parseInt(m[1].slice(4, 6), 16), a: 1 };
+    m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i.exec(s);
+    if (m) {
+      var a = m[4] === undefined ? 1 : (/%$/.test(m[4]) ? parseFloat(m[4]) / 100 : parseFloat(m[4]));
+      return { r: +m[1], g: +m[2], b: +m[3], a: a };
+    }
+    return null;
+  }
+  function decls(sel) {
+    var out = {};
+    rules.forEach(function (r) {
+      var list = r.sel.split(',').map(function (x) { return x.trim(); });
+      if (list.indexOf(sel) < 0) return;
+      r.body.split(';').forEach(function (d) {
+        var i = d.indexOf(':'); if (i < 0) return;
+        out[d.slice(0, i).trim()] = d.slice(i + 1).trim();
+      });
+    });
+    return out;
+  }
+  function over(fg, bg) {
+    var a = fg.a == null ? 1 : fg.a;
+    return { r: fg.r * a + bg.r * (1 - a), g: fg.g * a + bg.g * (1 - a), b: fg.b * a + bg.b * (1 - a), a: 1 };
+  }
+  function lum(c) {
+    function f(v) { v = v / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  }
+  function ratio(a, b) {
+    var l1 = lum(a), l2 = lum(b), hi = Math.max(l1, l2), lo = Math.min(l1, l2);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+  /* 逐层叠出最亮/最暗两种可能的背景（CSS 里靠前的 background 层在上） */
+  function bgs(sel) {
+    var d = decls(sel), decl = d['background-color'] || d['background'];
+    if (!decl) return null;
+    var layers = decl.split(/,(?![^()]*\))/).map(function (p) {
+      var cols = p.match(/#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)/g) || [];
+      return cols.length ? [cols[0], cols[cols.length - 1]] : [];
+    }).filter(function (a) { return a.length; });
+    if (!layers.length) return null;
+    var base = rgbOf('var(--bg-0)') || { r: 5, g: 7, b: 13, a: 1 };
+    return [0, 1].map(function (idx) {
+      var col = base;
+      for (var i = layers.length - 1; i >= 0; i--) {
+        var st = layers[i], c = rgbOf(st[Math.min(idx, st.length - 1)]);
+        if (c) col = over(c, col);
+      }
+      return col;
+    });
+  }
+  function evx(expr, vw, vh) {
+    return String(expr).split(/([+-])/).reduce(function (acc, tok) {
+      var t = tok.trim(); if (t === '' || t === '+') return acc;
+      if (t === '-') { acc.sign = -1; return acc; }
+      var m = /^([\d.]+)\s*(vh|vw|px|rem|em)?$/.exec(t);
+      if (!m) return acc;
+      var v = parseFloat(m[1]);
+      var unit = m[2] || 'px';
+      var px = unit === 'vh' ? v * vh / 100 : unit === 'vw' ? v * vw / 100 : v;
+      acc.sum += acc.sign * px; acc.sign = 1; return acc;
+    }, { sum: 0, sign: 1 }).sum;
+  }
+  function fontSizePx(sel, vw, vh) {
+    var d = decls(sel), fs = varOf(d['font-size']);
+    if (!fs) return null;
+    var m = /clamp\(\s*([\d.]+)px\s*,\s*([^,]+?)\s*,\s*([\d.]+)px\s*\)/.exec(fs);
+    if (m) return Math.max(parseFloat(m[1]), Math.min(parseFloat(m[3]), evx(m[2], vw, vh)));
+    m = /^([\d.]+)px$/.exec(fs);
+    return m ? parseFloat(m[1]) : null;
+  }
+  function weight(sel) {
+    var w = String(decls(sel)['font-weight'] || '400').trim();
+    return w === 'bold' ? 700 : (w === 'normal' ? 400 : parseFloat(w) || 400);
+  }
+  function opacityOf(sel) {
+    var o = decls(sel)['opacity'];
+    return o == null ? 1 : (parseFloat(o) || 1);
+  }
+  return { decls: decls, rgbOf: rgbOf, bgs: bgs, over: over, ratio: ratio, fontSizePx: fontSizePx, weight: weight, opacityOf: opacityOf,
+    base: rgbOf('var(--bg-0)') || { r: 5, g: 7, b: 13, a: 1 } };
+})();
+
+/* 每一对：文字选择器 / 背景容器选择器 / 说明（阈值按 WCAG：正文 4.5:1，大字 3:1） */
+var PAIRS = [
+  ['.narrator-text', '#narrator', '旁白正文'],
+  ['.hud-label', '.hud-item', 'HUD 标签'],
+  ['#hud-coins .hud-value', '.hud-item', '金币数字（金色）'],
+  ['#hud-suspicion .hud-value', '.hud-item', '怀疑值数字（青色）'],
+  ['#hud-patience .hud-value', '.hud-item', '耐心数字（绿色）'],
+  ['.hud-item.is-low .hud-value', '.hud-item', '资源告急（红色）'],
+  ['.shop-name', '.shop-card', '商店商品名'],
+  ['.shop-price', '.shop-card', '商店价格（契约点名要算）'],
+  ['.shop-desc', '.shop-card', '商店说明'],
+  ['.shop-owned', '.shop-card', '商店已购数'],
+  ['.shop-card.is-poor .shop-price', '.shop-card', '买不起时的价格（卡片 opacity .74）'],
+  ['.bag-name', '.bag-slot', '背包道具名（契约点名要算）'],
+  ['.bag-count', '.bag-slot', '背包数量'],
+  ['.shop-buy', '.shop-buy', '购买按钮文字（金色渐变底）'],
+  ['.shop-buy:disabled', '.shop-buy:disabled', '禁用购买按钮']
+];
+var cRows = [], cBad = [], cNoParse = [];
+PAIRS.forEach(function (p) {
+  var fgSel = p[0], bgSel = p[1];
+  var fg = CSSX.rgbOf(CSSX.decls(fgSel)['color']);
+  var fgSrc = CSSX.decls(fgSel)['color'];
+  if (!fg && /bag-name/.test(fgSel)) { fg = CSSX.rgbOf(CSSX.decls('.bag-slot')['color']); fgSrc = '.bag-slot 的 color=' + CSSX.decls('.bag-slot')['color'] + '（.bag-name 自身未声明，继承）'; }
+  var bgs = CSSX.bgs(bgSel);
+  if (!fg || !bgs) { cNoParse.push(p[2] + '（fg=' + fgSrc + ' bg=' + (bgs && bgs.length) + '）'); return; }
+  var opa = CSSX.opacityOf(fgSel.split(' ')[0]);
+  var ratioMin = 99;
+  bgs.forEach(function (bg) {
+    var f = fg, b = bg;
+    if (opa < 1) { f = CSSX.over({ r: f.r, g: f.g, b: f.b, a: opa }, CSSX.base); b = CSSX.over({ r: b.r, g: b.g, b: b.b, a: opa }, CSSX.base); }
+    ratioMin = Math.min(ratioMin, CSSX.ratio(f, b));
+  });
+  var px = CSSX.fontSizePx(fgSel, 667, 375);
+  var wt = CSSX.weight(fgSel);
+  var large = px != null && (px >= 24 || (px >= 18.66 && wt >= 700));
+  var need = large ? 3 : 4.5;
+  var okP = ratioMin >= need - 1e-9;
+  cRows.push({ pair: p[2], fg: fgSel, bg: bgSel, ratio: ratioMin, need: need, px: px, wt: wt, ok: okP });
+  if (!okP) cBad.push(p[2] + '（' + fgSel + ' on ' + bgSel + '）仅 ' + ratioMin.toFixed(2) + ':1，契约要求 ≥' + need + ':1');
+});
+ck.ok('U11.1', PAIRS.length >= 15 && cBad.length === 0,
+  'style.css 关键文字对底色 WCAG 对比度全部达标（' + PAIRS.length + ' 对由脚本实算：正文 ≥4.5:1、大字 ≥3:1；含契约点名的 .shop-price / .bag-name）',
+  cRows.map(function (r) { return (r.ok ? 'PASS' : 'FAIL') + ' ' + r.pair + ' ' + r.ratio.toFixed(2) + ':1/需' + r.need + (r.px ? '(' + r.px.toFixed(1) + 'px,w' + r.wt + ')' : ''); }).join(' | ') +
+  (cBad.length ? ' || 不达标：' + cBad.join('; ') : ''));
+ck.ok('U11.2', cNoParse.length === 0,
+  '每对都成功从 style.css 解析出真实颜色并算出比值（无「拍脑袋」常量；' + PAIRS.length + ' 对全部可解析）',
+  cNoParse.length ? '无法解析：' + cNoParse.join('; ') : ('全部 ' + PAIRS.length + ' 对可解析，最差 ' + cRows.map(function (r) { return r.ratio; }).sort(function (a, b) { return a - b; })[0].toFixed(2) + ':1'));
+var worst = cRows.slice().sort(function (a, b) { return a.ratio - b.ratio; })[0];
+ck.ok('U11.3', worst && worst.ratio >= 4.5,
+  '最差一对也 ≥4.5:1（' + (worst ? worst.pair + ' ' + worst.ratio.toFixed(2) + ':1' : '') + '）');
+/* 回归守卫：此对曾实测 3.26:1（卡片级 opacity:.74 + --danger）低于 4.5:1，
+   已由 ui-render 改为 #ff9b9b 修掉；本项专门守住它，不再只靠 U11.1 汇总行。 */
+var poorRow = cRows.filter(function (r) { return r.fg === '.shop-card.is-poor .shop-price'; })[0];
+ck.ok('U11.4', !!poorRow && poorRow.need === 4.5 && poorRow.ratio >= 4.5,
+  '「买不起」态价格（.shop-card.is-poor{opacity:.74}）专项对照度 ≥4.5:1：实测 ' +
+  (poorRow ? poorRow.ratio.toFixed(2) : '?') + ':1（修复前 3.26:1，ui-render 已换成 #ff9b9b）',
+  poorRow ? ('ratio=' + poorRow.ratio.toFixed(2) + ' need=' + poorRow.need + ' color=' + CSSX.decls('.shop-card.is-poor .shop-price')['color']) : 'none');
+
 ck.print();
 process.exit(ck.counts().FAIL > 0 ? 1 : 0);
 

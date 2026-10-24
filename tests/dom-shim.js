@@ -100,7 +100,14 @@ Object.defineProperty(El.prototype, 'textContent', {
 });
 Object.defineProperty(El.prototype, 'innerHTML', {
   get: function () { return this._html !== null ? this._html : this.childNodes.map(ser).join(''); },
-  set: function (v) { this.childNodes = []; this._html = String(v); }
+  /* 真实浏览器语义：赋 innerHTML 会**解析**成子节点，之后 querySelector 能查到模板里的元素
+     （ui.js 的商店卡片/结算正文都用 innerHTML 模板，不解析就查不到 .shop-buy 这类真实按钮）。 */
+  set: function (v) {
+    var parsed = parseHTML(String(v));
+    this.childNodes = parsed.childNodes;
+    parsed.childNodes.forEach(function (c) { c.parentNode = this; }, this);
+    this._html = null;
+  }
 });
 El.prototype.querySelector = function (s) { return descendants(this).filter(function (e) { return matches(e, s); })[0] || null; };
 El.prototype.querySelectorAll = function (s) { return descendants(this).filter(function (e) { return matches(e, s); }); };
@@ -121,7 +128,10 @@ function ser(n) {
   if (n.nodeType === 3) return n.data;
   if (n._html !== null) return n._html;
   var t = n.tagName.toLowerCase();
-  return '<' + t + '>' + n.childNodes.map(ser).join('') + '</' + t + '>';
+  var attrs = Object.keys(n.attributes).map(function (k) {
+    return ' ' + k + (n.attributes[k] === '' ? '' : '="' + n.attributes[k] + '"');
+  }).join('');
+  return '<' + t + attrs + '>' + n.childNodes.map(ser).join('') + '</' + t + '>';
 }
 function descendants(el) {
   var out = [];
@@ -253,6 +263,7 @@ function createPage(opts) {
   DOC = doc;
 
   var storage = makeStorage();
+  var vp = { width: 1280, height: 720 };
   var sandbox = {
     document: doc, console: console,
     setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval, clearInterval: clearInterval,
@@ -266,6 +277,28 @@ function createPage(opts) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.self = sandbox;
+
+  /* 视口桩：六档分辨率检查用（js/ui.js 是纯 CSS 流式布局，不读 innerWidth；
+   * 这里提供真实语义的 window 尺寸 + resize 事件，便于将来有 JS 响应式逻辑时同样可测）。 */
+  sandbox._ev = Object.create(null);
+  sandbox.addEventListener = function (t, fn) { (sandbox._ev[t] = sandbox._ev[t] || []).push(fn); };
+  sandbox.removeEventListener = function (t, fn) {
+    var a = sandbox._ev[t] || []; var i = a.indexOf(fn); if (i >= 0) a.splice(i, 1);
+  };
+  sandbox.dispatchEvent = function (ev) { fire(sandbox, ev && ev.type, ev); return true; };
+
+  function setViewport(w, h) {
+    vp.width = w; vp.height = h;
+    sandbox.innerWidth = w; sandbox.innerHeight = h;
+    sandbox.outerWidth = w; sandbox.outerHeight = h;
+    sandbox.devicePixelRatio = 1;
+    doc.documentElement.clientWidth = w; doc.documentElement.clientHeight = h;
+    if (body) { body.clientWidth = w; body.clientHeight = h; }
+    sandbox.dispatchEvent({ type: 'resize' });
+    return vp;
+  }
+  setViewport(vp.width, vp.height);
+
   vm.createContext(sandbox);
 
   var loaded = {}, missing = [], errors = [];
@@ -284,6 +317,8 @@ function createPage(opts) {
   return {
     doc: doc, tree: tree, body: body, sandbox: sandbox, storage: storage,
     fire: fire, loaded: loaded, missing: missing, errors: errors,
+    setViewport: setViewport,
+    viewport: function () { return { width: vp.width, height: vp.height }; },
     has: function (f) { return !!loaded[f]; },
     ok: missing.length === 0,
     loadSummary: Object.keys(loaded).join(',') + (missing.length ? ' | 缺/错: ' + missing.join(',') : '')

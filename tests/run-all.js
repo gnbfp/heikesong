@@ -3,11 +3,18 @@
  * ----------------------------------------------------------------------------
  * 真实命令：node tests/run-all.js
  *
- * 【默认跑的 4 个套件】
+ * 【默认跑的 5 个套件】
  *   1. tools/build-data.js --check   data/*.json ↔ js/data.js 产物一致性（预防「改了数据没重建」的假绿）
  *   2. tests/sim.js                  无头逻辑：状态机/RNG/结算/整局/存档/离线自包含
- *   3. tests/dom-smoke.js            Node DOM 垫片：真实 index.html + js/*.js 渲染与交互
- *   4. tests/headless-check.js       无头 Edge file:// 端到端（浏览器不可用则整段 SKIP）
+ *   3. tests/shop.js                 商店契约（经济/限购/道具/换门/闭嘴卡/保险丝/结算页），依赖真实 js/*
+ *   4. tests/dom-smoke.js            Node DOM 垫片：真实 index.html + js/*.js 渲染与交互
+ *   5. tests/headless-check.js       无头 Edge file:// 端到端（浏览器不可用则整段 SKIP）
+ *
+ * 【SKIP 的含义】SKIP = 该条断言在当前环境无法执行/无意义（不是通过，也不是失败）：
+ *   - headless-check.js 的 H* 在无浏览器沙箱里整段 SKIP，替代证据由 tests/dom-smoke.js 与
+ *     tests/sim.js 的同类断言提供；
+ *   - shop.js / sim.js 在缺 js/data.js 等产物时会把相关项标 SKIP 而不是假装通过。
+ *   默认 SKIP 不算失败；STRICT=1 时 SKIP 一律判失败（见下）。
  *
  * 【退出码】0 = 全部 PASS（允许 SKIP）；1 = 存在 FAIL。
  *   任何套件自身退出码非 0 也算 FAIL（即使它打印了 PASS=/FAIL= 汇总行，
@@ -19,10 +26,12 @@
  *   两种模式下脚本都会在结尾「未覆盖项（SKIP）明细」区逐条点名 SKIP 的 id / 套件 / 原因，
  *   便于无人值守时一眼看出到底缺什么证据。
  *
- * 【假绿自证（按需跑，不在默认 4 个套件里）】
- *   node tests/mutation-proof.js         # 在 os.tmpdir() 的整仓副本里变异：①data/items.json 漂移 ②去掉
- *                                        #   js/game.js 剧本门位校验，期望两次都变红、复原后都变绿
- *   node tests/mutation-proof.js --fast  # 同上但跳过 run-all（只跑 build-data --check + sim.js）
+ * 【假绿自证（按需跑，不在默认 5 个套件里）】
+ *   node tests/mutation-proof.js         # 在 os.tmpdir() 的整仓副本里变异：①data/items.json 数值漂移
+ *                                        #   ①b 只改 desc 文案 ②去掉 js/game.js 剧本门位校验
+ *                                        #   ③js/ui.js 不再标 .is-poor ④即时商品不扣钱；
+ *                                        #   期望每次变红、复原后变绿（当前 17/17 符合预期）
+ *   node tests/mutation-proof.js --fast  # 同上但跳过 run-all（只跑 --check + sim/shop/dom-smoke）
  * ========================================================================== */
 'use strict';
 
@@ -44,6 +53,10 @@ var SUITES = [
   {
     name: 'sim.js（无头逻辑：状态/RNG/结算/整局/存档/离线自包含）',
     file: 'sim.js', label: 'node tests/sim.js'
+  },
+  {
+    name: 'shop.js（商店契约：经济/限购/道具/换门/闭嘴卡/保险丝/结算页）',
+    file: 'shop.js', label: 'node tests/shop.js'
   },
   {
     name: 'dom-smoke.js（Node DOM 垫片：真实页面渲染与交互）',

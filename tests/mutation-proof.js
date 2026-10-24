@@ -158,6 +158,45 @@ var sim2b = runNode([path.join(copy, 'tests', 'sim.js')], copy);
 record('复原 ② 后 sim.js 重新变绿', sim2b.code === 0,
   'exit=' + sim2b.code + '｜' + lineOf(sim2b.out, '小结：'));
 
+/* ---------------- 变异 ③：商店 DOM 契约（ui.js 不再标 .is-poor） ---------------- */
+console.log('\n— 变异 ③：让 js/ui.js 不再按 affordable 标 .is-poor（商店 DOM 契约回归） —');
+var uiPath = path.join(copy, 'js', 'ui.js');
+var uiOrig = fs.readFileSync(uiPath, 'utf8');
+var anchor3 = 'var poor = it.affordable === false;';
+var t3 = uiOrig.replace(anchor3, 'var poor = false; /* MUTANT：故意不标 .is-poor */');
+var mutated3 = t3 !== uiOrig;
+fs.writeFileSync(uiPath, t3, 'utf8');
+record('变异 ③ 已生效（renderShop 不再产生 .is-poor）', mutated3, '锚点替换=' + mutated3);
+
+var dom3 = runNode([path.join(copy, 'tests', 'dom-smoke.js')], copy);
+var found3 = /\[FAIL\]\s+U10\.10/.test(dom3.out);
+record('变异 ③ dom-smoke.js 退出码 ≠ 0 且出现 [FAIL] U10.10（买不起置灰）', dom3.code !== 0 && found3,
+  'exit=' + dom3.code + '｜' + lineOf(dom3.out, 'U10\\.10') + '｜' + lineOf(dom3.out, '小结：'));
+
+/* ---------------- 复原 ③ ---------------- */
+fs.writeFileSync(uiPath, uiOrig, 'utf8');
+var dom3b = runNode([path.join(copy, 'tests', 'dom-smoke.js')], copy);
+record('复原 ③ 后 dom-smoke.js 重新变绿', dom3b.code === 0,
+  'exit=' + dom3b.code + '｜' + lineOf(dom3b.out, '小结：'));
+
+/* ---------------- 变异 ④：商店经济（即时商品不扣钱） ---------------- */
+console.log('\n— 变异 ④：让 js/game.js 的即时商品购买不扣金币（经济结算回归） —');
+var anchor4 = "{ id: 'shop_buy', label: def.name, coins: -def.price }, { multiplier: 1, source: 'shop' }";
+var t4 = gameOrig.replace(anchor4, "{ id: 'shop_buy', label: def.name, coins: 0 }, { multiplier: 1, source: 'shop' }");
+var mutated4 = t4 !== gameOrig && t4 !== t2;
+fs.writeFileSync(gamePath, t4, 'utf8');
+record('变异 ④ 已生效（即时商品扣款 0）', mutated4, '锚点替换=' + mutated4);
+
+var shop4 = runNode([path.join(copy, 'tests', 'shop.js')], copy);
+record('变异 ④ shop.js 退出码 ≠ 0（购买后金币/花销断言抓到不扣钱）', shop4.code !== 0,
+  'exit=' + shop4.code + '｜' + lineOf(shop4.out, '\\[FAIL\\] SH') + '｜' + lineOf(shop4.out, '小结：'));
+
+/* ---------------- 复原 ④ ---------------- */
+fs.writeFileSync(gamePath, gameOrig, 'utf8');
+var shop4b = runNode([path.join(copy, 'tests', 'shop.js')], copy);
+record('复原 ④ 后 shop.js 重新变绿', shop4b.code === 0,
+  'exit=' + shop4b.code + '｜' + lineOf(shop4b.out, '小结：'));
+
 /* ---------------- 汇总 ---------------- */
 var bad = results.filter(function (r) { return !r.ok; });
 console.log('\n' + '='.repeat(72));
