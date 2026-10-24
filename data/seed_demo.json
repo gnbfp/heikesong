@@ -1,0 +1,8 @@
+{
+  "seed": 20261024,
+  "rounds": [
+    { "round": 1, "doors": ["small_prize", "empty", "bomb"], "hostOpensSlot": 2, "narrator": "truth", "expect": "small_prize" },
+    { "round": 2, "doors": ["empty", "big_prize", "trap"], "hostOpensSlot": 0, "narrator": "lie", "expect": "challenge_win" },
+    { "round": 3, "doors": ["trap", "big_prize", "empty"], "hostOpensSlot": 0, "narrator": "lie_hard", "expect": "cashout" }
+  ]
+}

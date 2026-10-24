@@ -1,0 +1,49 @@
+{
+  "source": "《三扇门：别信旁白》开工清单 · 阶段 2/4 旁白语料（每句 ≤28 字）",
+  "pairs": {
+    "truth": [
+      ["t01", "t02"],
+      ["t03", "t04"]
+    ],
+    "lie": [
+      ["l01", "l02"],
+      ["l03", "l04"]
+    ],
+    "lie_hard": [
+      ["h01", "l01"],
+      ["h03", "l03"]
+    ]
+  },
+  "lines": [
+    { "id": "t01", "text": "这次是真的，我发誓。", "kind": "truth", "truthful": true },
+    { "id": "t02", "text": "门不会骗人，只有我会。", "kind": "truth", "truthful": true },
+    { "id": "t03", "text": "随便选，今晚运气站你这边。", "kind": "truth", "truthful": true },
+    { "id": "t04", "text": "别犹豫，奖品没长腿。", "kind": "truth", "truthful": true },
+
+    { "id": "l01", "text": "你听，警报响了，快撤。", "kind": "lie", "truthful": false },
+    { "id": "l02", "text": "大奖早就被人拿走了。", "kind": "lie", "truthful": false },
+    { "id": "l03", "text": "这一扇，我看过了，空的。", "kind": "lie", "truthful": false },
+    { "id": "l04", "text": "门后那点东西，不值一提。", "kind": "lie", "truthful": false },
+
+    { "id": "h01", "text": "我以旁白的名誉担保，选它。", "kind": "lie_hard", "truthful": false },
+    { "id": "h02", "text": "不信我？那你把金币都押上。", "kind": "lie_hard", "truthful": false },
+    { "id": "h03", "text": "骗你对我有什么好处呢？", "kind": "lie_hard", "truthful": false },
+    { "id": "h04", "text": "这次我连谎都懒得编了。", "kind": "lie_hard", "truthful": false },
+
+    { "id": "cw01", "text": "……算你赢。", "kind": "challenge_win", "truthful": true },
+    { "id": "cw02", "text": "你怎么知道我在撒谎？", "kind": "challenge_win", "truthful": true },
+    { "id": "cw03", "text": "好吧，这次是真的，别得意。", "kind": "challenge_win", "truthful": true },
+
+    { "id": "cf01", "text": "我说的是真的，你偏不信。", "kind": "challenge_fail", "truthful": true },
+    { "id": "cf02", "text": "怀疑是要付代价的。", "kind": "challenge_fail", "truthful": true },
+    { "id": "cf03", "text": "再质疑一次，我就让你闭嘴。", "kind": "challenge_fail", "truthful": true },
+
+    { "id": "in01", "text": "三扇门，一扇大奖，两扇空。", "kind": "intro", "truthful": true },
+    { "id": "fl01", "text": "灯光很亮，金币很响。", "kind": "flavor", "truthful": true },
+
+    { "id": "s01", "text": "换门换三次，你以为在洗牌？", "kind": "special", "truthful": true, "trigger": "switch3" },
+    { "id": "s02", "text": "你连着抓我两次，够了。", "kind": "special", "truthful": true, "trigger": "challenge2" },
+    { "id": "s03", "text": "三个空门，你的手气真稳定。", "kind": "special", "truthful": true, "trigger": "empty3" },
+    { "id": "s04", "text": "敢质疑我的人，我都记得。", "kind": "special", "truthful": true, "trigger": "challenge" }
+  ]
+}
