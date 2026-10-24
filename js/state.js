@@ -214,6 +214,89 @@
     return n;
   }
 
+  /* ------------------------------------------- 本地存档（阶段 5 P1，静默降级） */
+  /**
+   * 图鉴 / 最佳成绩本地存档。键名由《开工清单》阶段 5 固定：
+   *   three_doors_codex_v1   物品图鉴 + 语录图鉴 + 结局称号
+   *   three_doors_best_v1    最佳金币 / 最高轮次 / 已解锁称号
+   * 任何异常（隐私模式、配额、无 localStorage 的 Node 测试环境、坏 JSON）
+   * 都只返回空图鉴并返回 false，绝不上抛、绝不白屏。
+   */
+  var STORE_KEYS = Object.freeze({
+    codex: 'three_doors_codex_v1',
+    best: 'three_doors_best_v1'
+  });
+
+  function arr(v) { return Object.prototype.toString.call(v) === '[object Array]' ? v : []; }
+
+  /** 拿到可用的 localStorage；不可用返回 null（不抛）。 */
+  function backing() {
+    try {
+      var ls = root.localStorage;
+      if (!ls || typeof ls.getItem !== 'function') return null;
+      ls.setItem('__doors_probe__', '1');
+      ls.removeItem('__doors_probe__');
+      return ls;
+    } catch (e) { return null; }
+  }
+
+  function readJson(key, fallback) {
+    var ls = backing();
+    if (!ls) return fallback;
+    try {
+      var raw = ls.getItem(key);
+      if (!raw) return fallback;
+      var v = JSON.parse(raw);
+      return (v && typeof v === 'object') ? v : fallback;
+    } catch (e) { return fallback; }
+  }
+
+  function writeJson(key, value) {
+    var ls = backing();
+    if (!ls) return false;
+    try { ls.setItem(key, JSON.stringify(value)); return true; } catch (e) { return false; }
+  }
+
+  function drop(key) {
+    var ls = backing();
+    if (!ls) return false;
+    try { ls.removeItem(key); return true; } catch (e) { return false; }
+  }
+
+  var CodexStore = {
+    keys: STORE_KEYS,
+    /** 存档是否可用（浏览器且未被禁用）。 */
+    available: function () { return !!backing(); },
+    /** 读图鉴；失败/缺失 → 空图鉴。 */
+    loadCodex: function () {
+      var c = readJson(STORE_KEYS.codex, {});
+      return { items: arr(c.items).slice(), lines: arr(c.lines).slice(), endings: arr(c.endings).slice() };
+    },
+    saveCodex: function (codex) {
+      if (!codex) return false;
+      return writeJson(STORE_KEYS.codex, {
+        items: arr(codex.items), lines: arr(codex.lines), endings: arr(codex.endings)
+      });
+    },
+    clearCodex: function () { return drop(STORE_KEYS.codex); },
+    loadBest: function () {
+      var b = readJson(STORE_KEYS.best, {});
+      return { coins: Number(b.coins) || 0, round: Number(b.round) || 0, titles: arr(b.titles).slice() };
+    },
+    saveBest: function (best) {
+      if (!best) return false;
+      return writeJson(STORE_KEYS.best, {
+        coins: Number(best.coins) || 0, round: Number(best.round) || 0, titles: arr(best.titles)
+      });
+    },
+    clearBest: function () { return drop(STORE_KEYS.best); },
+    /** 清空收集进度（图鉴 + 最佳成绩）。 */
+    clearAll: function () { var a = CodexStore.clearCodex(); var b = CodexStore.clearBest(); return a || b; }
+  };
+
+  root.CodexStore = CodexStore;
+  root.STORE_KEYS = STORE_KEYS;
+
   root.STATES = STATES;
   root.CHOICES = CHOICES;
   root.MODES = MODES;

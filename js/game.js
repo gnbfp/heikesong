@@ -64,6 +64,7 @@
       data: root.GameData || null,
       applyEffect: root.applyEffect || null,
       narrator: root.Narrator || null,
+      store: root.CodexStore || null,
       setTimeout: (typeof root.setTimeout === 'function') ? root.setTimeout.bind(root) : fallbackTimeout,
       clearTimeout: (typeof root.clearTimeout === 'function') ? root.clearTimeout.bind(root) : function () {},
       now: function () { return Date.now(); }
@@ -81,8 +82,8 @@
     };
   }
 
-  function config() { return (Game.deps.data && Game.deps.data.config) || {}; }
-  function items() { return (Game.deps.data && Game.deps.data.items) || {}; }
+  function config() { return (Game.deps && Game.deps.data && Game.deps.data.config) || {}; }
+  function items() { return (Game.deps && Game.deps.data && Game.deps.data.items) || {}; }
   function timings() {
     var t = config().timings || {};
     var out = {};
@@ -108,6 +109,7 @@
     _emitter: null,
     _timers: [],
     _generation: 0,
+    _endingModal: null,   // 结算页弹层 spec，供「看图鉴 → 关闭」后返回
 
     /** 初始化：解析依赖、建立初始状态、绑定 UI。 */
     init: function (opts) {
@@ -135,6 +137,7 @@
       Game._clearTimers();
       Game._generation++;
       Game.state = Game._freshState(m);
+      Game._endingModal = null;
       Game._render();
       Game.beginRound();
       return Game.state;
@@ -145,6 +148,7 @@
       var gen = ++Game._generation;
       Game._clearTimers();
       Game.state = Game._freshState(MODES.DEMO);
+      Game._endingModal = null;
       Game._render();
       var self = this;
       var wait = timings().resetMs;
@@ -232,6 +236,7 @@
       s.doubled = false;
       s.peekUsed = false;
       s.narratorLines = [];
+      s.lastChallenge = null;
       s.flags.revealLocked = false;
       s.doors = Game.generateDoors(s.round);
       Game.setState(STATES.ROUND_INTRO);
@@ -432,8 +437,14 @@
       var itemId = s.doors[slot].itemId;
       var multiplier = s.doubled ? 2 : 1;
 
+      // 状态机只能由 game.js 迁移：内容层（applyEffect）在耐心归零时会顺手写
+      // phase='GAME_OVER'，那会让下面的 setState(REVEAL) 被 ALLOWED 拒绝、
+      // 动画回调也因 phase!==REVEAL 提前返回 → 结算层永不弹出。这里先把它还原，
+      // 死亡判定仍由 settleRound 的 patience<=0 分支负责。
+      var prevPhase = s.phase;
       var applied = Game._apply(itemId, { multiplier: multiplier, source: 'reveal' });
       s = applied.state;
+      s.phase = prevPhase;
       Game.state = s;
       s.doors[slot].revealed = true;
       Game.setState(STATES.REVEAL);
@@ -542,13 +553,19 @@
         '<p>称号：<b>' + rating.title + '</b></p>' +
         (highlight ? '<p class="muted">' + highlight + '</p>' : '') +
         '<p class="fine">游戏内金币纯属娱乐，非真实货币。</p>';
+      Game._saveCodex();
+      Game._saveBest();
       var ui = Game._ui();
+      Game._endingModal = {
+        kind: 'cashout', title: '本局结算', body: body,
+        actions: [
+          { label: '再来一局', choice: 'restart', primary: true },
+          { label: '看图鉴', choice: 'codex' }
+        ]
+      };
       if (ui.openModal) {
         Game._safe(function () {
-          ui.openModal({
-            kind: 'cashout', title: '本局结算', body: body,
-            actions: [{ label: '再来一局', choice: 'restart', primary: true }]
-          });
+          ui.openModal(Game._endingModal);
         });
       }
       Game._emitter.emit({ type: 'cashout', state: Game.state, rating: rating });
@@ -563,19 +580,25 @@
       var body = '<p>耐心归零，旁白赢了这一局。</p>' +
         '<p>你在第 <b>' + s.round + '</b> 轮被劝退，手里还剩 <b>' + s.coins + '</b> 金币。</p>' +
         '<p class="fine">游戏内金币纯属娱乐，非真实货币。</p>';
+      Game._saveCodex();
+      Game._saveBest();
       var ui = Game._ui();
+      Game._endingModal = {
+        kind: 'gameover', title: '耐心归零', body: body,
+        actions: [
+          { label: '再来一局', choice: 'restart', primary: true },
+          { label: '看图鉴', choice: 'codex' }
+        ]
+      };
       if (ui.openModal) {
         Game._safe(function () {
-          ui.openModal({
-            kind: 'gameover', title: '耐心归零', body: body,
-            actions: [{ label: '再来一局', choice: 'restart', primary: true }]
-          });
+          ui.openModal(Game._endingModal);
         });
       }
       return Game.state;
     },
 
-    /** 弹层按钮回调：continue / cashout / restart。 */
+    /** 弹层按钮回调：continue / cashout / restart / codex / clear_codex / close。 */
     modalChoice: function (choice) {
       switch (choice) {
         case 'continue':
@@ -590,6 +613,20 @@
         case 'restart':
           Game._closeModal();
           Game.start(MODES.DEMO);
+          return true;
+        case 'codex':
+          return Game.showCodex();
+        case 'clear_codex':
+          Game.clearCodex();
+          return Game.showCodex();
+        case 'close':
+        case 'dismiss':
+          Game._closeModal();
+          if (Game._endingModal &&
+              (Game.state.phase === STATES.CASHOUT || Game.state.phase === STATES.GAME_OVER)) {
+            var ui = Game._ui();
+            if (ui.openModal) Game._safe(function () { ui.openModal(Game._endingModal); });
+          }
           return true;
         default:
           return false;
@@ -698,7 +735,10 @@
       }
       for (var i = 0; i < bands.length; i++) {
         var b = bands[i];
-        if (coins >= b.min && coins <= b.max) return { title: b.title, coins: coins, round: state.round };
+        // 最高档在 JSON 里是 max:null（Infinity 无法序列化）→ 视为无上限
+        var max = (b.max == null) ? Infinity : b.max;
+        var min = (b.min == null) ? -Infinity : b.min;
+        if (coins >= min && coins <= max) return { title: b.title, coins: coins, round: state.round };
       }
       return { title: '普通赌徒', coins: coins, round: state.round };
     },
@@ -714,44 +754,65 @@
     },
 
     /**
-     * 固定种子演示脚本的确定性走法（给测试与彩排用，异步但无动画等待）。
+     * 固定种子演示脚本的确定性走法（给测试与彩排用）。
+     * 不依赖固定时长：按状态机相位推进（PICK→选门 / DECIDE→决策 / SETTLE_ROUND→继续）。
      * 第 1 轮：选小奖门 → 坚持；第 2 轮：选大奖门 → 质疑 → 坚持；第 3 轮：选大奖门 → 收手。
      */
     autoDemo: function () {
       var out = { rounds: [], final: null };
-      var s = Game.state;
       if (!Game.deps.data || !Game.deps.data.seedDemo) return Promise.resolve(out);
-      var pickIndex = function (itemId) {
+
+      var plan = [
+        { pick: 'small_prize', choice: CHOICES.STICK },
+        { pick: 'big_prize', challenge: true, choice: CHOICES.STICK },
+        { pick: 'big_prize', choice: CHOICES.CASHOUT }
+      ];
+      Game.start(MODES.DEMO);
+
+      var idx = 0, guard = 0;
+      var delay = function (ms) {
+        return new Promise(function (resolve) {
+          (Game.deps.setTimeout || fallbackTimeout)(resolve, ms);
+        });
+      };
+      var slotOf = function (itemId) {
         var doors = Game.state.doors;
-        for (var i = 0; i < doors.length; i++) if (doors[i].itemId === itemId) return i;
+        for (var i = 0; i < doors.length; i++) {
+          if (doors[i].itemId === itemId && !doors[i].opened) return i;
+        }
         return 0;
       };
-      var wait = function (ms) { return Game._wait(ms); };
-      var chain = Promise.resolve();
 
-      var runRound = function (roundNo, actions) {
-        chain = chain.then(function () { return wait(timings().introMs + 10); });
-        chain = chain.then(function () { return wait(timings().narratorMs + 10); });
-        actions.forEach(function (a) {
-          if (a.act === 'pick') {
-            chain = chain.then(function () { Game.action({ type: 'pick', slot: pickIndex(a.itemId) }); return wait(timings().hostOpenMs + 10); });
-          } else if (a.act === 'challenge') {
-            chain = chain.then(function () { Game.action({ type: 'decide', choice: CHOICES.CHALLENGE }); return wait(10); });
-          } else if (a.act === 'decide') {
-            chain = chain.then(function () { Game.action({ type: 'decide', choice: a.choice }); return wait(timings().revealMs + 10); });
+      var tick = function () {
+        if (guard++ > 5000) { out.error = 'autoDemo 超时（相位未推进）'; return Promise.resolve(out); }
+        var s = Game.state;
+        if (s.phase === STATES.PICK && idx < plan.length) {
+          Game.action({ type: 'pick', slot: slotOf(plan[idx].pick) });
+        } else if (s.phase === STATES.DECIDE && idx < plan.length) {
+          var step = plan[idx];
+          if (step.challenge && !s.lastChallenge) {
+            Game.action({ type: 'decide', choice: CHOICES.CHALLENGE });
+          } else {
+            out.rounds.push(Game.snapshot());
+            Game.action({ type: 'decide', choice: step.choice });
+            idx++;
+            if (step.choice === CHOICES.CASHOUT) {
+              out.final = Game.snapshot();
+              return Promise.resolve(out);
+            }
           }
-        });
-        chain = chain.then(function () { out.rounds.push(Game.snapshot()); });
+        } else if (s.phase === STATES.SETTLE_ROUND) {
+          Game.action({ type: 'modal_choice', choice: 'continue' });
+        } else if (s.phase === STATES.CASHOUT || s.phase === STATES.GAME_OVER) {
+          out.final = Game.snapshot();
+          return Promise.resolve(out);
+        } else if (s.phase === STATES.IDLE) {
+          out.final = Game.snapshot();
+          return Promise.resolve(out);
+        }
+        return delay(2).then(tick);
       };
-
-      runRound(1, [{ act: 'pick', itemId: 'small_prize' }, { act: 'decide', choice: CHOICES.STICK }]);
-      runRound(2, [{ act: 'pick', itemId: 'big_prize' }, { act: 'challenge' }, { act: 'decide', choice: CHOICES.STICK }]);
-      runRound(3, [{ act: 'pick', itemId: 'big_prize' }, { act: 'decide', choice: CHOICES.CASHOUT }]);
-
-      return chain.then(function () {
-        out.final = Game.snapshot();
-        return out;
-      });
+      return delay(0).then(tick);
     },
 
     /* ------------------------------------------------------------ 内部工具 */
@@ -766,6 +827,7 @@
         : (seed == null ? (Game.deps.now() >>> 0) : seed);
       var st = createInitialState(mode, { seed: seedValue, resources: res });
       st.joinedAt = Game.deps.now();
+      Game._loadCodexInto(st);
       return st;
     },
 
@@ -882,15 +944,111 @@
       Game._render();
     },
 
+    /* ---------------------------------------- 图鉴与本地存档（阶段 5 P1） */
+
+    _store: function () {
+      return (Game.deps && Game.deps.store) || null;
+    },
+
+    /** 开局时把上一次的图鉴读回 state.codex；无存档/坏存档 → 保持空图鉴。 */
+    _loadCodexInto: function (st) {
+      var store = Game._store();
+      if (!store || !store.loadCodex) return st;
+      var saved = null;
+      try { saved = store.loadCodex(); } catch (e) { saved = null; }
+      if (saved && (saved.items.length || saved.lines.length || saved.endings.length)) {
+        st.codex = {
+          items: (saved.items || []).slice(),
+          lines: (saved.lines || []).slice(),
+          endings: (saved.endings || []).slice()
+        };
+      }
+      return st;
+    },
+
+    /** 图鉴写入后落盘（失败静默）。 */
+    _saveCodex: function () {
+      var store = Game._store();
+      if (!store || !store.saveCodex) return false;
+      try { return !!store.saveCodex(Game.state.codex); } catch (e) { return false; }
+    },
+
+    /** 最佳成绩：金币取最大、轮次取最高、称号取并集。 */
+    best: function () {
+      var store = Game._store();
+      var prev = { coins: 0, round: 0, titles: [] };
+      if (store && store.loadBest) {
+        try { prev = store.loadBest() || prev; } catch (e) { prev = { coins: 0, round: 0, titles: [] }; }
+      }
+      var s = Game.state || {};
+      var titles = (prev.titles || []).slice();
+      var rating = Game.rating(s);
+      if (rating && rating.title && titles.indexOf(rating.title) < 0) titles.push(rating.title);
+      return {
+        coins: Math.max(Number(prev.coins) || 0, Number(s.coins) || 0),
+        round: Math.max(Number(prev.round) || 0, Number(s.round) || 0),
+        titles: titles
+      };
+    },
+
+    _saveBest: function () {
+      var store = Game._store();
+      if (!store || !store.saveBest) return false;
+      try { return !!store.saveBest(Game.best()); } catch (e) { return false; }
+    },
+
+    /** 清空收集进度（图鉴 + 最佳成绩）。 */
+    clearCodex: function () {
+      var store = Game._store();
+      var s = Game.state;
+      if (s) s.codex = { items: [], lines: [], endings: [] };
+      if (store && store.clearAll) { try { store.clearAll(); } catch (e) { /* 静默 */ } }
+      Game._toast('收集进度已清空。');
+      Game._render();
+      return true;
+    },
+
     _unlockItem: function (id) {
       var codex = Game.state.codex;
-      if (codex.items.indexOf(id) < 0) codex.items.push(id);
+      if (codex.items.indexOf(id) < 0) { codex.items.push(id); Game._saveCodex(); }
     },
 
     _unlockLine: function (line) {
       if (!line || !line.id) return;
       var codex = Game.state.codex;
-      if (codex.lines.indexOf(line.id) < 0) codex.lines.push(line.id);
+      if (codex.lines.indexOf(line.id) < 0) { codex.lines.push(line.id); Game._saveCodex(); }
+    },
+
+    /** 图鉴弹层：物品 / 语录 / 结局称号 + 最佳成绩 + 清空按钮。 */
+    showCodex: function () {
+      var s = Game.state;
+      var codex = (s && s.codex) || { items: [], lines: [], endings: [] };
+      var names = [];
+      for (var i = 0; i < codex.items.length; i++) {
+        var it = itemOf(codex.items[i]);
+        names.push(it && it.name ? it.name : codex.items[i]);
+      }
+      var best = Game.best();
+      var body = '<p>物品图鉴：<b>' + names.length + '</b>' +
+        (names.length ? '（' + names.join('、') + '）' : '（还没有）') + '</p>' +
+        '<p>语录图鉴：<b>' + codex.lines.length + '</b> 句</p>' +
+        '<p>结局称号：<b>' + codex.endings.length + '</b>' +
+        (codex.endings.length ? '（' + codex.endings.join('、') + '）' : '（还没有）') + '</p>' +
+        '<p class="muted">最佳：金币 ' + best.coins + ' · 最高第 ' + best.round + ' 轮</p>' +
+        '<p class="fine">存档仅保存在本机浏览器（three_doors_codex_v1 / three_doors_best_v1），不上传。</p>';
+      var ui = Game._ui();
+      if (ui.openModal) {
+        Game._safe(function () {
+          ui.openModal({
+            kind: 'codex', title: '图鉴', body: body,
+            actions: [
+              { label: '清空收集进度', choice: 'clear_codex' },
+              { label: '关闭', choice: 'close', primary: true }
+            ]
+          });
+        });
+      }
+      return codex;
     },
 
     _deltaText: function (result) {
