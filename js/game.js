@@ -35,12 +35,22 @@
     GAME_OVER: ['IDLE', 'ROUND_INTRO']
   };
 
-  /** 轮次风险提示兜底文案（若 GameData.config.roundHints 提供则以配置为准）。 */
+  /**
+   * 轮次风险提示兜底文案（若 GameData.config.roundHints 提供则以配置为准）。
+   * 注意：横幅只报风险，不得预告旁白本轮的口径——真假留给你自己判断。
+   * 这里必须与 data/config.json 的 roundHints 逐字一致（评审 P0-3）。
+   */
   var ROUND_HINTS = {
-    1: '第 1 轮：旁白今天心情不错，说的多半是实话。',
-    2: '第 2 轮：旁白开始不老实了。',
-    3: '第 3 轮：旁白已经不想装了。'
+    1: '第 1 轮：旁白还在热身，先看清台面。',
+    2: '第 2 轮：灯光暗了一点，台下有人在看。',
+    3: '第 3 轮：气氛不太对，收手也算赢。',
+    4: '第 4 轮起：门后可能藏着炸弹，见好就收。'
   };
+
+  /** 用户最后一次的静音选择（默认不静音）。
+   *  跨「重置 / 切换模式 / 再来一局」保持：静音是本机偏好，不是本局状态；
+   *  但不落盘（不写 CodexStore / localStorage），只在本进程内记忆。 */
+  var mutedPref = false;
 
   var DEFAULT_TIMINGS = {
     introMs: 800, narratorMs: 2000, hostOpenMs: 600,
@@ -235,6 +245,8 @@
       s.hostOpenedSlot = null;
       s.doubled = false;
       s.peekUsed = false;
+      s.challengedThisRound = false;
+      s.hostScriptFallback = false;
       s.narratorLines = [];
       s.lastChallenge = null;
       s.flags.revealLocked = false;
@@ -294,9 +306,17 @@
       Game.setState(STATES.HOST_OPEN);
 
       var script = Game.script();
-      var hostSlot = (script && script.hostOpensSlot != null)
-        ? script.hostOpensSlot
-        : Game.hostPick(s.doors, slot);
+      var hostSlot = (script && script.hostOpensSlot != null) ? script.hostOpensSlot : null;
+      /* 剧本门位是「口味」不是「特权」：它同样必须满足主持人的硬不变量——
+         不能是玩家所选的门、不能是大奖门、必须是未开的合法槽位。
+         否则 R3 玩家点 1 号门时会出现「主持人打开玩家自己那扇门」的穿帮，
+         并被 switchDoor 顺势送一个白拿大奖（评审 P0-1）。不合法就退化为真实 hostPick。 */
+      if (hostSlot != null && (hostSlot === slot || !s.doors[hostSlot] || s.doors[hostSlot].opened
+        || s.doors[hostSlot].itemId === 'big_prize')) {
+        s.hostScriptFallback = true;
+        hostSlot = null;
+      }
+      if (hostSlot == null) hostSlot = Game.hostPick(s.doors, slot);
       s.hostOpenedSlot = hostSlot;
       if (hostSlot != null) s.doors[hostSlot].opened = true;
       Game._render();
@@ -381,12 +401,19 @@
       return true;
     },
 
-    /** 质疑旁白：消耗怀疑值，成功给奖励 / 失败扣金币与耐心；连续质疑让旁白记仇。 */
+    /** 质疑旁白：每轮一次，消耗怀疑值，成功给奖励 / 失败扣金币与耐心；失败让旁白记仇。 */
     challenge: function () {
       var s = Game.state;
       var narrator = Game.deps.narrator;
       var cfg = config().suspicion || {};
       var cost = cfg.cost == null ? 1 : cfg.cost;
+      /* 评审 P0-2：质疑原地不迁移状态，且判定固定用本轮第一条旁白（无随机），
+         于是同一轮连点就是「每次 +20 且 100% 成功」的送分按钮（演示 R2 实测 130→150→170）。
+         限制为每轮一次，并把这次机会算作已用（失败也消耗），让它重新变成资源决策。 */
+      if (s.challengedThisRound) {
+        Game._toast('同一轮的旁白只会被拆穿一次。');
+        return false;
+      }
       if (!narrator || typeof narrator.resolveChallenge !== 'function') {
         Game._toast('旁白不在线，质疑无效。');
         return false;
@@ -395,6 +422,7 @@
         Game._toast('怀疑值不足（需要 ' + cost + ' 点）。');
         return false;
       }
+      s.challengedThisRound = true;
       var line = s.narratorLines[0] || null;
       var res = narrator.resolveChallenge(s, line) || {};
 
@@ -826,6 +854,7 @@
         ? ((data && data.seedDemo && data.seedDemo.seed) || root.DEMO_SEED)
         : (seed == null ? (Game.deps.now() >>> 0) : seed);
       var st = createInitialState(mode, { seed: seedValue, resources: res });
+      st.flags.muted = mutedPref;   // 静音跨重置/切换模式保持（见 mutedPref 注释）
       st.joinedAt = Game.deps.now();
       Game._loadCodexInto(st);
       return st;
@@ -904,6 +933,7 @@
 
     _toggleMute: function () {
       Game.state.flags.muted = !Game.state.flags.muted;
+      mutedPref = Game.state.flags.muted;   // 记住选择，重置/切换模式后仍然静音
       Game._render();
       return Game.state.flags.muted;
     },
