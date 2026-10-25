@@ -438,7 +438,7 @@ function mkGame(mode, over) {
     now: function () { return FIXED_NOW; }
   };
   if (over) for (var k in over) deps[k] = over[k];
-  G.Game.init({ mode: mode || 'demo', seed: NORMAL_SEED, deps: deps });
+  G.Game.init({ mode: mode || 'demo', seed: NORMAL_SEED, doors: (mode === 'normal' ? 3 : undefined), deps: deps });
   return { Game: G.Game, ui: ui, rec: ui.rec, deps: deps };
 }
 
@@ -661,7 +661,7 @@ async function main() {
   var badR1 = [], sets = {};
   for (var sd = 0; sd < 30; sd++) {
     var gn = mkGame('normal', {});
-    gn.Game.init({ mode: 'normal', seed: 1000 + sd, deps: gn.deps });
+    gn.Game.init({ mode: 'normal', doors: 3, seed: 1000 + sd, deps: gn.deps });
     var dR1 = gn.Game.generateDoors(1).map(function (d) { return d.itemId; }).sort().join(',');
     sets[dR1] = (sets[dR1] || 0) + 1;
     if (dR1 !== 'big_prize,empty,small_prize') badR1.push('seed' + (1000 + sd) + ' → ' + dR1);
@@ -697,10 +697,10 @@ async function main() {
     '分布=' + jsonOf(dist));
 
   /* G1.7 固定种子发牌确定性（普通模式同 seed 两次；Game 是单例，必须顺序跑） */
-  var gA = mkGame('normal', {}); gA.Game.init({ mode: 'normal', seed: 424242, deps: gA.deps });
+  var gA = mkGame('normal', {}); gA.Game.init({ mode: 'normal', doors: 3, seed: 424242, deps: gA.deps });
   var seqA1 = [];
   for (var q2 = 1; q2 <= 5; q2++) seqA1.push(gA.Game.generateDoors(q2).map(function (d) { return d.itemId; }).join(','));
-  var gB = mkGame('normal', {}); gB.Game.init({ mode: 'normal', seed: 424242, deps: gB.deps });
+  var gB = mkGame('normal', {}); gB.Game.init({ mode: 'normal', doors: 3, seed: 424242, deps: gB.deps });
   var seqB1 = [];
   for (var q3 = 1; q3 <= 5; q3++) seqB1.push(gB.Game.generateDoors(q3).map(function (d) { return d.itemId; }).join(','));
   ck.deepEq('G1.7', seqA1, seqB1, '同 seed(424242) 两次初始化、各自连发 5 轮：发牌序列完全一致（'+ seqA1.join(' | ') +'）');
@@ -761,7 +761,7 @@ async function main() {
     var g24 = mkGame('normal', {});
     var badFree = [];
     for (var fz = 0; fz < 60; fz++) {
-      g24.Game.init({ mode: 'normal', seed: 5000 + fz, deps: g24.deps });
+      g24.Game.init({ mode: 'normal', doors: 3, seed: 5000 + fz, deps: g24.deps });
       var fr = 1 + (fz % 5);
       var fdoors = g24.Game.generateDoors(fr);
       for (var fp = 0; fp < fdoors.length; fp++) {
@@ -1471,7 +1471,7 @@ async function main() {
   for (var s8 = 0; s8 < 12; s8++) {
     for (var sl8 = 0; sl8 < 3; sl8++) {
       var gf = mkGame('normal', {});
-      gf.Game.init({ mode: 'normal', seed: 8000 + s8, deps: gf.deps });
+      gf.Game.init({ mode: 'normal', doors: 3, seed: 8000 + s8, deps: gf.deps });
       gf.Game.start('normal');
       var okP8 = await until(function () { return gf.Game.state.phase === 'PICK'; }, 2000);
       if (!okP8) { freeBad.push('seed' + (8000 + s8) + ' 未到 PICK'); continue; }

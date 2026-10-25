@@ -236,6 +236,34 @@ var ux6b = runNode([path.join(copy, 'tests', 'ux.js')], copy);
 record('复原 ⑥ 后 ux.js 的 X1.6 重新变绿', /\[PASS\] X1\.6/.test(ux6b.out),
   'exit=' + ux6b.code + '｜' + lineOf(ux6b.out, '\\[PASS\\] X1\\.6'));
 
+/* ---------------- 变异 ⑦：门数上限 6→4 → doors.js 的 G9.4 变红 ---------------- */
+console.log('\n— 变异 ⑦：把 js/game.js 的 clampDoorCount 上限 6 改成 4（?doors=6 失效） —');
+var anchor7 = 'return Math.max(3, Math.min(6, n));';
+var t7 = gameOrig.replace(anchor7, 'return Math.max(3, Math.min(4, n));');
+fs.writeFileSync(gamePath, t7, 'utf8');
+record('变异 ⑦ 已生效（门数上限改成 4）', t7 !== gameOrig, '锚点替换=' + (t7 !== gameOrig));
+var d7 = runNode([path.join(copy, 'tests', 'doors.js')], copy);
+record('变异 ⑦ doors.js 退出码 ≠ 0 且点名 G9.4', d7.code !== 0 && /\[FAIL\] G9\.4/.test(d7.out),
+  'exit=' + d7.code + '｜' + lineOf(d7.out, '\\[FAIL\\] G9\\.4') + '｜' + lineOf(d7.out, '小结：'));
+fs.writeFileSync(gamePath, gameOrig, 'utf8');
+var d7b = runNode([path.join(copy, 'tests', 'doors.js')], copy);
+record('复原 ⑦ 后 doors.js 的 G9.4 重新变绿', /\[PASS\] G9\.4/.test(d7b.out),
+  'exit=' + d7b.code + '｜' + lineOf(d7b.out, '\\[PASS\\] G9\\.4'));
+
+/* ---------------- 变异 ⑧：演示剧本门数优先级失效 → doors.js 的 G9.10 变红 ---------------- */
+console.log('\n— 变异 ⑧：让 doorCountFor 忽略演示剧本（剧本优先失效） —');
+var anchor8 = 'if (s.mode !== MODES.NORMAL && script && Array.isArray(script.doors) && script.doors.length) {';
+var t8 = gameOrig.replace(anchor8, 'if (false) {');
+fs.writeFileSync(gamePath, t8, 'utf8');
+record('变异 ⑧ 已生效（剧本门数分支被短路）', t8 !== gameOrig, '锚点替换=' + (t8 !== gameOrig));
+var d8 = runNode([path.join(copy, 'tests', 'doors.js')], copy);
+record('变异 ⑧ doors.js 退出码 ≠ 0 且点名 G9.10', d8.code !== 0 && /\[FAIL\] G9\.10/.test(d8.out),
+  'exit=' + d8.code + '｜' + lineOf(d8.out, '\\[FAIL\\] G9\\.10') + '｜' + lineOf(d8.out, '小结：'));
+fs.writeFileSync(gamePath, gameOrig, 'utf8');
+var d8b = runNode([path.join(copy, 'tests', 'doors.js')], copy);
+record('复原 ⑧ 后 doors.js 的 G9.10 重新变绿', /\[PASS\] G9\.10/.test(d8b.out),
+  'exit=' + d8b.code + '｜' + lineOf(d8b.out, '\\[PASS\\] G9\\.10'));
+
 /* ---------------- 汇总 ---------------- */
 var bad = results.filter(function (r) { return !r.ok; });
 console.log('\n' + '='.repeat(72));

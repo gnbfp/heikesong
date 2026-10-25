@@ -69,6 +69,10 @@ var SUITES = [
     file: 'ux.js', label: 'node tests/ux.js'
   },
   {
+    name: 'doors.js（契约 v5 多门：?doors 3–6/主持人/换门/复现/概率）',
+    file: 'doors.js', label: 'node tests/doors.js'
+  },
+  {
     name: 'dom-smoke.js（Node DOM 垫片：真实页面渲染与交互）',
     file: 'dom-smoke.js', label: 'node tests/dom-smoke.js'
   },
