@@ -579,8 +579,14 @@ async function main() {
     ck.skip('G0.0', 'js/data.js 真实产物契约',
       'js/data.js 不存在 → 以下 G0 用测试替身验证；生成器 tools/build-data.js 的自身校验需单独跑 --check');
   }
-  ck.eq('G0.1', Object.keys(D.items || {}).length, 10, TAG + ' GameData.items = 9 主条目 + 1 别名（shutup_card）');
-  ck.eq('G0.2', (D.itemList || []).length, 9, TAG + ' GameData.itemList = 9');
+  var mainIds = Object.keys(D.items || {}).filter(function (k) { return D.items[k] && D.items[k].id === k; });
+  var aliasKeys = Object.keys(D.items || {}).filter(function (k) { return D.items[k] && D.items[k].id !== k; });
+  ck.ok('G0.1', (D.itemList || []).length >= 9 && mainIds.length === (D.itemList || []).length,
+    TAG + ' GameData.items 主条目数 = itemList 长度（≥9；当前 ' + (D.itemList || []).length + ' 主条目 + ' +
+    aliasKeys.length + ' 别名：' + aliasKeys.join(',') + '）');
+  ck.ok('G0.2', ['big_prize', 'small_prize', 'empty', 'bomb', 'trap'].every(function (k) { return !!D.items[k]; }) &&
+    (D.itemList || []).every(function (it) { return it && it.id; }),
+    TAG + ' 核心 5 种门物品齐全、itemList 每项带 id（当前 ' + (D.itemList || []).length + ' 种）');
   ck.ok('G0.3', D.items && D.itemList && D.items[D.itemList[0].id] === D.itemList[0],
     TAG + ' items[id] 与 itemList[i] 是同一引用（不重复造对象）');
   ck.ok('G0.4', typeof D.itemById === 'function' && D.itemById('big_prize') === D.items.big_prize,

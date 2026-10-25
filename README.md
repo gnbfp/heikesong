@@ -114,6 +114,27 @@ docs/                 协作说明、回滚说明、现场自测清单、商店�
 
 同轮顺带：结算弹层新增**旁白点评行**（引擎写 `state.settleLine`，UI 渲染 `.settle-line`，本轮/收手/劝退三种时刻各有专属台词）；`apply_speed` 动作与 `set_pref{animationSpeed}` 等价；设置弹层与规则弹层不再误显示「种子」行。
 
+## 第五轮：专业级打磨（2026-10-25 白天，A/B/C 并行交付后由 Lead 整合）
+
+三条工作流各交一份改动包，Lead 按 `handoff/integrate.js` 校验后合并：**A 界面与动画**（`js/ui.js` + `style.css`）、**B 数据与随机性**（`data/*.json` + `js/data.js` + `tools/build-data.js`）、**C 测试与概率**（`tests/doors.js`，本轮由 Lead 自己做）。
+
+| # | 内容 | 证据 |
+| --- | --- | --- |
+| B1 | **多门 3–6 扇**：每轮按 `config.doorCount.weights` 抽门数（3 扇 45% / 4 扇 30% / 5 扇 18% / 6 扇 7%）；`?doors=N` 强制 3–6（非法值回落 3）；演示剧本固定 3 门。任意门数都保证「恰好 1 扇大奖门 + 至少 1 扇空门」，主持人仍只开 1 扇、开完只剩 2 扇 | `tests/doors.js` G9.1–G9.18 |
+| B2 | **牌面扩到 12 种**：新增 `jackpot` 隐藏大奖 +150（第 3 轮起）、`landmine` 地雷 −40/−1 耐心、`quicksand` 流沙 −20/−1 怀疑值；第 1 轮绝不出现危险牌；`bomb`/`mystery_box` 文案收敛到 22 字内 | `tests/doors.js` G9.13 / `tools/build-data.js` 构建期校验 |
+| B3 | **第 5/6 轮提示**补齐（只讲规则不剧透真假），`config.roundHints` 1–6 与 `js/game.js` 兜底文案逐字一致 | `tests/sim.js` HINT-NO-SPOILER |
+| A1 | **设计 token 层**：`:root` 新增 37 个 token（间距/圆角/阴影/动效时长/缓动/稀有度色/危险色/金币色/命中区） | `style.css` `:root` |
+| A2 | **多门网格**：`#doors[data-cols]` 四套模板（3 门 3 列 / 4 门 2×2 / 5 门 3+2 / 6 门 3×2），多行绝对等高；`#doors-count` 徽标显示「N 扇门」 | `tests/doors.js` G9.19–G9.21 + `tests/dom-smoke.js` |
+| A3 | **门卡三档材质**：普通/稀有/危险三套色边光晕，未开面一律普通材质（不剧透），已开面再压亮一档 | `tests/dom-smoke.js` 结构组 |
+| A4 | **交互动画**：开门/开奖/数值飘字/按压反馈全部走 token，单次 ≤420ms；`prefers-reduced-motion` 或「跳过动画」时全部压到 0ms | `tests/dom-smoke.js` + 静态表 |
+| A5 | **HUD 与结算**：金币/怀疑值/耐心滚动计数、结算成金边成绩卡、HUD 与弹层按钮命中区 ≥44px | `tests/dom-smoke.js` 命中区/对比度组 |
+| A6 | **键盘扩到多门**：`1`–`6` 直接点门、`[`/`]` 在活门间移焦点（`.is-focus` 焦点环）、`Enter` 确认焦点门；仅 PICK 相位消费 | `tests/ux.js` 键盘组 |
+| A7 | **降级开关**：`:root[data-reduced-fx="1"]` + `@media (prefers-reduced-motion)` 双通道把 `--dur-*` 归零 | `tests/dom-smoke.js` |
+| A8 | **可读性**：正文/弹层/旁白行高统一 1.55；竖屏提示贴底半透明，不再压门卡与决策按钮 | `tests/dom-smoke.js` 布局静态表 |
+| C1–C5 | **测试基座**：新增第 8 套件 `tests/doors.js`（26 项：`?doors` 3–6、多门主持人规则、换门、演示剧本优先、1200 局分布 ±10%、4–6 门占比 ≥30%、静态 DOM 契约）；变异自证 29 → **31 条** | `node tests/run-all.js`、`node tests/mutation-proof.js` |
+
+同轮：`handoff/integrate.js`（Lead 的整合工具）校验交付包结构、写作用域与换行/BOM，演练通过后才写入真仓库。
+
 ## 本地校验
 
 ```powershell
@@ -123,9 +144,10 @@ node tests/sim.js                 # 无头逻辑 + 清单验收项（175 项）
 node tests/shop.js                # 商店 / 背包 / 经济 / 换门代价（75 项）
 node tests/features.js            # 线索 / 连击 / 怀疑值 / 结局 / 提词器 / 图鉴可达（58 项）
 node tests/ux.js                  # 体验增强：成就 / 统计 / 种子重放 / 键盘 / 人格 / 引导 / 竖屏（73 项）
+node tests/doors.js               # 多门（3–6 扇）：?doors / 主持人规则 / 换门 / 分布（26 项）
 node tests/dom-smoke.js           # Node DOM 垫片：页面结构、商店 DOM 契约、六档视口、WCAG 对比度（98 项）
-node tests/run-all.js             # 全量自测，7 个套件：512 PASS / 0 FAIL / 11 SKIP
-node tests/mutation-proof.js      # 变异自证：25/25（故意改坏数据/逻辑，确认自测真的会红）
+node tests/run-all.js             # 全量自测，8 个套件：514 PASS / 0 FAIL / 9 SKIP
+node tests/mutation-proof.js      # 变异自证：31/31（故意改坏数据/逻辑，确认自测真的会红）
 ```
 
 `tests/run-all.js` 默认第一项就是 `tools/build-data.js --check`（防「改了 `data/*.json` 忘了重建 `js/data.js`」的假绿）；`STRICT=1 node tests/run-all.js` 会把 SKIP 视为失败（最终验收用）。浏览器端到端用例（`tests/headless-check.js`）在无法启动浏览器的环境里会 SKIP，并在汇总表里逐条点名。仓库用 `.gitattributes` 把文本文件固定为 LF，且 `--check` 比较前会归一化换行，所以 Windows 上 `core.autocrlf=true` 不会让 `run-all` 假失败（换行差异不判为产物漂移，数值/文案漂移照旧判失败）。
@@ -199,7 +221,11 @@ node tests/mutation-proof.js      # 变异自证：25/25（故意改坏数据/�
 18. **首帧渲染与真机目检**：G7 的视觉升级（幕布 / 聚光灯 / 浮雕门卡 / 彩带）全部是静态 CSS + 内联 SVG + 运行时合成，没有音频或图片文件；与第 3 条相同，沙箱无法启动浏览器，**真机观感需要人工按 [现场自测清单](docs/现场自测清单.md) 第 13 节看一遍**。
 19. **Esc 不关必选流程弹层**：本轮结算（`round`）/ 结算页（`cashout`）/ 结束页（`gameover`）三种弹层必须点按钮才能离开；按 Esc 会被忽略（契约 §4.2 注）。原因：这些弹层一旦被关掉、而相位仍停在 `SETTLE_ROUND / CASHOUT / GAME_OVER`，玩家会卡在「无弹层可操作」的死状态。信息弹层（规则 / 设置 / 图鉴 / 商店）一律可用 Esc 关闭；`Game.openHelp/openSettings` 也会拒绝覆盖这些必选弹层（只弹 toast）。
 20. **新手引导是 5 步，不是契约初稿的 3 步**：`Game.tutorialSteps()` 返回 5 步（`tut_door/tut_narrator/tut_decide/tut_challenge/tut_cashout`），每步带 `id/title/text/anchor`，anchor 覆盖 `doors/decide/cashout`；契约 §2.3 已按实测回写。步数多不是缺陷，是「把商店/收手也说清楚」的取舍。
-21. **测试基线数字**：`node tests/run-all.js` = 8 套件 **512 PASS / 0 FAIL / 11 SKIP**（`build-data --check` 独立一项、sim 175、shop 75、features 58、ux 73、dom-smoke 98、headless 9 PASS + 9 SKIP）；`STRICT=1` 会把 9 条 SKIP 判失败（全部是 headless-check 的 Edge 启动项）。`tests/ux.js` 的「只提示一次」断言依赖 `tests/dom-shim.js` 的 localStorage 桩记录 `_writes`（本轮给 `makeStorage()` 补上）。
+21. **测试基线数字**：`node tests/run-all.js` = 8 套件 **514 PASS / 0 FAIL / 9 SKIP**（`build-data --check` 独立一项、sim 175、shop 75、features 58、ux 73、doors 26、dom-smoke 98、headless 9 PASS + 9 SKIP）；`STRICT=1` 会把 9 条 SKIP 判失败（全部是 headless-check 的 Edge 启动项）。`tests/ux.js` 的「只提示一次」断言依赖 `tests/dom-shim.js` 的 localStorage 桩记录 `_writes`（本轮给 `makeStorage()` 补上）。
+22. **`?doors=N` 非法值回落 3**：给了 `?doors=2/7/abc` 时按 3 扇处理（契约 §2.1），不按权重抽——固定门数是给演示者的「可预期礼物」，给错就还标准 3 门。
+23. **12 种牌面里只有 `big_prize` 是「唯一大奖」**：`jackpot` 虽是 `kind: 'prize'` 的高收益牌（+150），但 4–6 门的「恰好 1 扇大奖门」按 id `big_prize` 判定，所以多门不会出现两个大奖。
+24. **A 工作流的浏览器证据来自它的机器**：A 包的验收证据里有 20 条无头 Edge 端到端 PASS；本仓库沙箱仍无法启动浏览器（见第 3 条），真机渲染仍需人工按 [现场自测清单](docs/现场自测清单.md) 第 14 节检查。
+25. **整合后多门 UI 的 SKIP 已清空**：`tests/doors.js` 原有 2 条 UI SKIP（`#doors-count` 文本 / `data-cols`）在 A 交付后改为「静态 DOM 契约核对」，现全部 PASS；`run-all` 剩余 9 条 SKIP 仍是无头 Edge。
 
 ## 开发约定
 
@@ -224,8 +250,9 @@ node tests/mutation-proof.js      # 变异自证：25/25（故意改坏数据/�
 游戏内金币纯属娱乐，非真实货币，不涉及任何充值、提现或赌博表达。
 
 
-## v5 多门测试（2026-10-25，工作流 C）
+## v5 多门（2026-10-25，A/B/C 整合后）
 
-- 新增 `tests/doors.js`（G9 组 **24 PASS / 0 FAIL / 2 SKIP**；2 SKIP 为 `#doors-count` 文本与 `#doors` data-cols，待工作流 A 的 ui.js 交付后由 dom-smoke 转 PASS）并注册为 **第 8 套件**；`node tests/run-all.js` 现为 **512 PASS / 0 FAIL / 11 SKIP**（11 SKIP = 9 条无头 Edge + 2 条多门 UI）。
-- C1 参数化：`tests/sim.js`/`shop.js`/`features.js`/`ux.js` 普通模式初始化全部显式 `doors: 3` 夹具（多门由 `?doors=N` 夹具覆盖；`config.doorCount` 交付后 G9.17/G9.18 自动复跑分布断言）。
-- C4 变异：`tests/mutation-proof.js` 增到 **29 条**，新增「门数上限 6→4」「演示剧本门数优先失效」两处变异（doors.js 必红）。
+- 第 8 套件 `tests/doors.js` = **26 PASS / 0 FAIL / 0 SKIP**；`node tests/run-all.js` 现为 **8 套件 514 PASS / 0 FAIL / 9 SKIP**（9 SKIP 全部是无头 Edge 启动项）。
+- `?doors=3/4/5/6` 强制门数；`config.doorCount.weights` = 45/30/18/7，1200 局实测分布约 46%/28%/20%/6%，与权重偏差 ≤10%；4–6 门对局占比 53.7%（≥30%）。
+- 变异自证 31 条：新增「门数上限 6→4」「演示剧本门数优先失效」两处 doors.js 必红变异。
+- C1 参数化：`tests/sim.js`/`shop.js`/`features.js`/`ux.js` 普通模式初始化全部显式 `doors: 3` 夹具，多门由 `?doors=N` 覆盖。

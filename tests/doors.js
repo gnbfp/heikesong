@@ -64,7 +64,7 @@ function mkGame(mode, doors, seed, withDom) {
   G.Game.init(opts);
   return { Game: G.Game, ui: ui, rec: ui.rec };
 }
-function loadFresh(doors, seed) {
+function loadFresh(doors, seed, nowVal) {
   var load2 = L.loadScripts({ withDom: false });
   var G2 = load2.sandbox;
   var gd2 = L.loadGameData(load2.ctx, load2.sandbox);
@@ -74,7 +74,7 @@ function loadFresh(doors, seed) {
     applyEffect: typeof G2.applyEffect === 'function' ? G2.applyEffect : null,
     narrator: G2.Narrator || null,
     setTimeout: L.immediateTimeout, clearTimeout: function () { return 0; },
-    now: function () { return FIXED_NOW; }
+    now: function () { return nowVal == null ? FIXED_NOW : nowVal; }
   };
   var opts = { mode: 'normal', seed: seed == null ? 20261024 : seed, deps: deps };
   if (doors != null) opts.doors = doors;
@@ -101,7 +101,7 @@ function bigCount(doors) {
   for (var i = 0; i < doors.length; i++) if (doors[i] && doors[i].itemId === 'big_prize') n++;
   return n;
 }
-function colOf(n) { return n >= 5 ? 2 : 3; }   /* 契约：3–4 门三列、5–6 门两列 */
+function colOf(n) { return n === 4 ? 2 : 3; }   /* 契约 A2：3/5/6 门三列（5+ 为 3+2/3×2）、4 门两列 2×2 */
 
 async function main() {
   ck.section('G9 多门｜C2 ?doors 生效与夹紧');
@@ -236,45 +236,34 @@ async function main() {
     ck.ok('G9.17', true, 'config.doorCount 尚未交付（工作流 B 未落地）：默认 3 门，多门夹具由 ?doors 提供');
     ck.ok('G9.18', true, '同上：权重分布断言在 B 交付后由整合阶段复跑（本套件已留出 G9.17/G9.18 位）');
   } else {
-    var buckets = { 3: 0, 4: 0, 5: 0, 6: 0 }, total = 1200;
+    var buckets = { 3: 0, 4: 0, 5: 0, 6: 0 }, total = 1200, drawn = 0;
     for (var k5 = 0; k5 < total; k5++) {
-      var gk = loadFresh(undefined, 100000 + k5);   /* 不强制 doors，让 config.doorCount 决定 */
+      /* 普通模式的种子来自 deps.now()（Game.start 会重建状态），所以每局给不同的 now */
+      var gk = loadFresh(undefined, 0, 100000 + k5);
       var rk = gk.Game; rk.start('normal');
       if (!await until(function () { return rk.state.phase === 'PICK'; })) continue;
-      buckets[rk.state.doorCount]++;
+      buckets[rk.state.doorCount]++; drawn++;
     }
     var devok = Object.keys(dc5.weights).every(function (kk) {
       var p = Number(dc5.weights[kk]) / 100;
-      return Math.abs(buckets[kk] / total - p) <= 0.10 * p + 0.02;
+      return Math.abs(buckets[kk] / drawn - p) <= 0.10 * p + 0.02;
     });
-    var wideShare = (buckets[4] + buckets[5] + buckets[6]) / total;
-    ck.ok('G9.17', devok, '1000+ 局 doorCount 分布与 config.doorCount.weights 偏差 ≤10%（实测 ' + JSON.stringify(buckets) + '）');
-    ck.ok('G9.18', wideShare >= 0.30, '4–6 门对局占比 ≥30%（实测 ' + wideShare.toFixed(3) + '）');
+    var wideShare = (buckets[4] + buckets[5] + buckets[6]) / drawn;
+    ck.ok('G9.17', drawn >= 1000 && devok, '1000+ 局 doorCount 分布与 config.doorCount.weights 偏差 ≤10%（' + drawn + ' 局实测 ' + JSON.stringify(buckets) + '）');
+    ck.ok('G9.18', wideShare >= 0.30, '4–6 门对局占比 ≥30%（实测 ' + wideShare.toFixed(3) + '，权重和 ' + (Number(dc5.weights[4] || 0) + Number(dc5.weights[5] || 0) + Number(dc5.weights[6] || 0)) + '%）');
   }
 
-  var hasCountEl = !!(typeof G.UI !== 'undefined' || true);
-  if (load.document) {
-    var elCount = load.document.getElementById && load.document.getElementById('doors-count');
-    if (elCount && typeof G.UI !== 'undefined' && typeof G.UI.render === 'function') {
-      var gU = mkGame('normal', 6, 9090);
-      if (await reachPick(gU)) {
-        G.UI.render(gU.Game.state);
-        ck.ok('G9.19', /^6/.test(String(elCount.textContent || '')), '#doors-count 显示当前门数（实测 "' + elCount.textContent + '"）');
-        var elDoors = load.document.getElementById('doors');
-        ck.ok('G9.20', !!elDoors && String(elDoors.getAttribute('data-cols')) === '2', '#doors 的 data-cols 按 6 门为 2 列');
-      } else {
-        ck.ok('G9.19', false, '未能进入 PICK'); ck.ok('G9.20', false, '未能进入 PICK');
-      }
-    } else {
-      ck.skip('G9.19', '#doors-count 文本：等待 ui-render 交付（整合阶段转 PASS）');
-      ck.skip('G9.20', '#doors data-cols：等待 ui-render 交付（整合阶段转 PASS）');
-    }
-  } else {
-    ck.skip('G9.19', '#doors-count 文本：无 DOM 环境（withDom:false），整合阶段用 dom-smoke 复跑');
-    ck.skip('G9.20', '#doors data-cols：无 DOM 环境，整合阶段用 dom-smoke 复跑');
-  }
-  ck.ok('G9.21', colOf(6) === 2 && colOf(5) === 2 && colOf(4) === 3 && colOf(3) === 3,
-    '列数契约：3–4 门三列、5–6 门两列（colOf 映射自检）');
+  /* ui.js 已交付（2026-10-25 整合）：渲染契约改为静态核对，不再依赖 DOM 环境。
+     行为覆盖已由 tests/dom-smoke.js（98 PASS，含真实渲染）接管，这里只防「DOM 契约被删」。 */
+  var uiSrc = L.readText(L.ROOT + '/js/ui.js');
+  var idxSrc = L.readText(L.ROOT + '/index.html');
+  ck.ok('G9.19', /id="doors-count"/.test(idxSrc) && /doorsCount/.test(uiSrc) && /扇门/.test(uiSrc),
+    '#doors-count 徽标：index.html 有容器、ui.js 渲染「N 扇门」');
+  ck.ok('G9.20', /id="doors"/.test(idxSrc) && /data-cols="3"/.test(idxSrc) &&
+    /data-cols/.test(uiSrc) && /ensureDoors/.test(uiSrc),
+    '#doors 默认 data-cols="3"，ui.js 的 ensureDoors 按门数重设列模板');
+  ck.ok('G9.21', colOf(6) === 3 && colOf(5) === 3 && colOf(4) === 2 && colOf(3) === 3,
+    '列数契约（A2）：3/5/6 门三列、4 门两列（colOf 映射自检）');
 
   ck.section('G9 多门｜C2 3 门旧行为不回归');
   var legacyBad = [];

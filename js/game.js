@@ -58,20 +58,20 @@
   /** 契约 v4 §6：?seed=xxx 指定的重放种子（本进程内记忆）。 */
   var seedPref = null;
 
-  /** 契约 v5：?doors=N 强制本轮门数（仅普通模式；3–6，越界忽略）。 */
+  /** 契约 v5：?doors=N 强制本轮门数（仅普通模式；3–6，非法值回落 3）。 */
   var forceDoorCount = null;
 
-  /** 读 URL 里的 ?doors=N（deps.location 可注入，测试用）。 */
+  /** 读 URL 里的 ?doors=N（deps.location 可注入，测试用）。契约 §2.1：给了但非法 → 回落 3。 */
   function doorsFromUrl(opts, deps) {
     if (opts && opts.doors != null) {
       var n0 = parseInt(opts.doors, 10);
-      return (n0 >= 3 && n0 <= 6) ? n0 : null;
+      return (n0 >= 3 && n0 <= 6) ? n0 : 3;
     }
     var loc = (deps && deps.location) || root.location || {};
     var m = /(?:[?&])doors=(\d+)(?:&|$)/.exec(String(loc.search || ''));
     if (!m) return null;
     var n = parseInt(m[1], 10);
-    return (n >= 3 && n <= 6) ? n : null;
+    return (n >= 3 && n <= 6) ? n : 3;
   }
 
   /** 读 URL 里的提词器开关；deps.location 可注入（测试用）。 */
