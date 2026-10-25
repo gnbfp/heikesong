@@ -405,7 +405,10 @@ VIEWPORTS.forEach(function (v) {
   var problems = [];
   if (got.width !== w || got.height !== h) problems.push('视口桩未生效');
   if (SANDBOX.innerWidth !== w || SANDBOX.innerHeight !== h) problems.push('window.innerWidth/Height 不符');
-  if (qa('#doors .door').length !== 3) problems.push('#doors 不是 3 扇门');
+  var wantDoors = (Game.state.doors || []).length;   /* 契约 v6：门数可变 3–6，别再写死 3 */
+  if (qa('#doors .door').length !== wantDoors) {
+    problems.push('#doors 渲染 ' + qa('#doors .door').length + ' 扇，state.doors 是 ' + wantDoors + ' 扇');
+  }
   ['topbar', 'stage', 'narrator', 'hud', 'doors'].forEach(function (id) {
     var el = byId(id);
     if (!el) problems.push('缺少 #' + id);
@@ -416,7 +419,7 @@ VIEWPORTS.forEach(function (v) {
   if (problems.length) vpBad.push(w + '×' + h + ': ' + problems.join('/'));
 });
 ck.ok('U10.16', vpBad.length === 0,
-  '六档分辨率（' + VIEWPORTS.map(function (v) { return v.join('×'); }).join(' / ') + '）下三扇门/顶栏/舞台/旁白/HUD/决策/商店按钮全部在位且未被隐藏',
+  '六档分辨率（' + VIEWPORTS.map(function (v) { return v.join('×'); }).join(' / ') + '）下门（数量与 state.doors 一致）/顶栏/舞台/旁白/HUD/决策/商店按钮全部在位且未被隐藏',
   vpBad.join(' | ') || '全部在位');
 ck.ok('U10.17', SANDBOX.innerWidth === 667 && SANDBOX.innerHeight === 375,
   '视口桩真的可切换（最后一次 667×375 已生效，innerWidth=' + SANDBOX.innerWidth + '）');

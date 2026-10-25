@@ -181,25 +181,27 @@ async function main() {
     '24 局（4/5/6 门 × 8 seed）：主持人开别人且非大奖，换门后目标合法（≠主持门、未开封中）',
     bad2.join(' | '));
 
-  ck.section('G9 多门｜C2 第 1 轮多出门的约束与可复现');
+  ck.section('G9 多门｜C2 第 1 轮多门的 v6 不变量与可复现');
   var badR1 = [];
   for (var seed3 = 1; seed3 <= 10; seed3++) {
     var g3 = mkGame('normal', 6, seed3 * 17);
     if (!await reachPick(g3)) { badR1.push('未到PICK'); continue; }
     var st3 = g3.Game.state;
     if (st3.round !== 1) badR1.push('round=' + st3.round);
-    var extra = 0;
+    var idsR1 = itemIds(st3.doors);
+    var bigR1 = idsR1.filter(function (x) { return x === 'big_prize'; }).length;
+    var emptyR1 = idsR1.filter(function (x) { return (gd.data.items[x] && gd.data.items[x].kind) === 'no-prize'; }).length;
+    /* 契约 v6 §2.1：多门（4–6）同样满足「恰好 1 大奖 + ≥2 空门」；多出的门可以是权重池里的任意物品
+       （炸弹/陷阱/道具），只要 minRound 生效——第 1 轮不得出现 minRound>1 的炸弹。 */
+    if (bigR1 !== 1) badR1.push('seed' + seed3 + ' 大奖数=' + bigR1);
+    if (emptyR1 < 2) badR1.push('seed' + seed3 + ' 空门=' + emptyR1);
     for (var e = 0; e < st3.doors.length; e++) {
-      var id3 = st3.doors[e].itemId;
-      if (id3 === 'big_prize' || id3 === 'small_prize' || id3 === 'empty') continue;
-      extra++;
-      var kind3 = (gd.data.items[id3] && gd.data.items[id3].kind) || '';
-      if (!(kind3 === 'no-prize' || id3 === 'small_prize')) badR1.push('r1多出门=' + id3);
+      var id3 = st3.doors[e].itemId, def3 = gd.data.items[id3] || {};
+      if (Number(def3.minRound || 1) > 1) badR1.push('r1 出现 minRound=' + def3.minRound + ' 的 ' + id3);
     }
-    if (extrasOf(gd) === 0 && false) badR1.push('x');
   }
   ck.ok('G9.13', badR1.length === 0,
-    '第 1 轮 6 门：除固定三档外，多出的门只允许空门/小奖（实测 ' + badR1.length + ' 次违规）',
+    '第 1 轮 6 门（契约 v6 §2.1）：恰好 1 扇大奖、≥2 扇空门，且不出现 minRound>1 的物品（炸弹第 1 轮不出现）；多出的门允许权重池里的任意物品',
     badR1.join(' | '));
 
   var sigA = [], sigB = [];
@@ -288,10 +290,17 @@ async function main() {
   }
   ck.ok('G9.24', slotBad.length === 0, '6 门局穷举玩家选 0–5 号门：主持人始终开别人且非大奖', slotBad.join('|'));
 
+  /* 契约 v6 §2.1：剧本门数可变（3–6），且剧本优先于 ?doors。
+     旧断言「三轮都=3」已随 v6 失效 → 改成「每轮 ≥3 且 ≤6，且运行时门数 == 该轮剧本长度」。 */
   var rounds6 = (gd.data.seedDemo && gd.data.seedDemo.rounds) || [];
-  ck.ok('G9.25', rounds6.length === 3 && rounds6.every(function (r) { return r.doors && r.doors.length === 3; }),
-    '演示剧本 3 轮的数据层 doors 长度都=3（剧本优先于 ?doors）',
-    'rounds=' + rounds6.length);
+  var scriptLens6 = rounds6.map(function (r) { return (r.doors || []).length; });
+  var lensOk6 = rounds6.length === 3 && scriptLens6.every(function (n) { return n >= 3 && n <= 6; });
+  var gs6 = mkGame('demo', 6, 20261024);            /* 显式要 6 门，但演示剧本应压过它 */
+  var atPick6 = await reachPick(gs6, 'demo');
+  var runtimeLen6 = gs6.Game.state.doors.length;
+  ck.ok('G9.25', lensOk6 && atPick6 && runtimeLen6 === scriptLens6[0],
+    '演示剧本门数优先于 ?doors：剧本各轮 3–6 门（本轮 ' + scriptLens6.join('/') + '），显式 ?doors=6 时运行时仍按剧本第 1 轮发牌',
+    'rounds=' + rounds6.length + ' 剧本门数=' + scriptLens6.join('/') + ' 运行时首轮=' + runtimeLen6 + ' atPick=' + atPick6);
 
   var cnt6 = [];
   for (var q6 = 1; q6 <= 30; q6++) cnt6.push(mkGame('normal', null, q6).Game.doorCountFor ? 3 : 0);

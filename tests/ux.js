@@ -630,7 +630,7 @@ if (!kp || !K || !K.Game || !K.UI) {
       }
       return [{
         id: 'X4_claim_r' + state.round, text: '\u7b2c ' + (slot + 1) + ' \u53f7\u95e8\u662f\u7a7a\u95e8\u3002',
-        kind: 'lie', truthful: false,
+        kind: 'lie', truthful: false, claimable: true, claimType: 'slot_kind',
         claim: { type: 'slot_kind', slot: slot, kind: 'empty', truthful: false }
       }];
     };
@@ -691,35 +691,85 @@ if (!kp || !K || !K.Game || !K.UI) {
     return await untilMs(function () { return KGame.state.phase === 'DECIDE'; }, 12000);
   }
 
-  var keyPlan = ['d', 's', 'q'];
-  for (var kq = 0; kq < keyPlan.length; kq++) {
-    if (!atDecide) break;
-    fireKey(keyPlan[kq]);
+  /* 契约 v6 §4.2 键位（d/s/q 各占一个干净 DECIDE；`s` 只进「选门弹层」不直接换门）：
+     - d → decide(double)，本轮决定已用掉 → 等结算层 / 下一轮
+     - s → decide(switch) → 引擎进选门态（flags.switchPick=true，phase 仍 DECIDE），
+          此时键盘归弹层，必须先 cancelSwitch 才能继续按其它决定键
+     - q → decide(challenge)，在同一个 DECIDE 里按（cancelSwitch 不消耗本轮） */
+  var sawDouble = false, sawSwitch = false, sawChallenge = false, swState = false, x43Diag = null;
+  if (!atDecide) {
+    /* 上面没能到 DECIDE：保持原样，让 X4.3 直接红并给出证据 */
+  } else {
+    fireKey('d');
     await untilMs(function () { return KGame.state.phase !== 'DECIDE'; }, 4000);
-    if (kq < keyPlan.length - 1) await nextDecide();
+    sawDouble = dec('double') > 0;
+
+    await nextDecide();
+    if (KGame.state.phase === 'DECIDE') {
+      fireKey('s');
+      swState = await untilMs(function () { return !!(KGame.state.flags && KGame.state.flags.switchPick); }, 3000);
+      sawSwitch = dec('switch') > 0;
+      KGame.cancelSwitch();                       /* 回到 DECIDE，不扣费、不换门 */
+      await untilMs(function () { return !(KGame.state.flags && KGame.state.flags.switchPick); }, 2000);
+      /* ui.js:33 CLICK_LOCK_MS = 400 —— `s` 按下时 armLock('decide') 仍在生效，
+         canDecide()（ui.js:619）会挡住紧接着的 q；键盘用例必须等去抖窗口过去。 */
+      await new Promise(function (r) { setTimeout(r, 550); });
+      fireKey('q');
+      await untilMs(function () { return KGame.state.phase !== 'DECIDE'; }, 4000);
+      sawChallenge = dec('challenge') > 0;
+      if (!sawChallenge) {
+        var ln0 = (KGame.state.narratorLines || [])[0] || {};
+        var chalBtn = null;
+        try {
+          var bs = kp.doc.querySelectorAll('#decide button, .decide-bar button, button');
+          for (var bi = 0; bi < bs.length; bi++) {
+            var t2 = String(bs[bi].textContent || '');
+            if (/\u8d28\u7591/.test(t2)) { chalBtn = bs[bi]; break; }
+          }
+        } catch (e2) {}
+        x43Diag = {
+          finalSwitchPick: !!(KGame.state.flags && KGame.state.flags.switchPick),
+          modalOpen: !!(K.UI.state && K.UI.state.modal && !K.UI.state.modal.hidden),
+          modalHiddenAttr: (function () {
+            var m = kp.doc.querySelector('#modal');
+            if (!m) return 'no-modal';
+            return m.hidden === true || m.getAttribute('hidden') !== null ? 'hidden' : 'shown';
+          })(),
+          decideBtnCount: kp.doc.querySelectorAll('.decide-btn').length,
+          challengeBtnInDecide: !!kp.doc.querySelector('#decide .decide-btn[data-choice="challenge"]'),
+          challengeDataHard: (function () {
+            var b = kp.doc.querySelector('#decide .decide-btn[data-choice="challenge"]');
+            return b ? String(b.getAttribute('data-hard')) + '/' + String(b.getAttribute('aria-disabled')) : 'no-btn';
+          })(),
+          suspicion: KGame.state.suspicion,
+          challengedThisRound: !!KGame.state.challengedThisRound,
+          lineClaimable: !!ln0.claimable, lineKind: ln0.kind,
+          challengeBtnDisabled: chalBtn ? String(chalBtn.getAttribute('aria-disabled')) : 'no-btn'
+        };
+      }
+    }
   }
-  var sawDouble = dec('double') > 0;
-  var sawSwitch = dec('switch') > 0;
-  var sawChallenge = dec('challenge') > 0;
-  c('X4.3', atDecide && sawDouble && sawSwitch && sawChallenge,
-    'DECIDE 阶段 d/s/q → decide:{double|switch|challenge}（键位与契约 §4.2 一致）',
-    'phase=' + KGame.state.phase + ' double=' + sawDouble + ' switch=' + sawSwitch + ' challenge=' + sawChallenge +
-    '；decide actions=' + jsonOf(acts.filter(function (a) { return a.type === 'decide'; })));
+  c('X4.3', atDecide && sawDouble && sawSwitch && sawChallenge && swState,
+    'DECIDE 阶段 d/s/q → decide:{double|switch|challenge}（v6：s 进选门态而非直接换门，cancelSwitch 后可继续）',
+    'phase=' + KGame.state.phase + ' double=' + sawDouble + ' switch=' + sawSwitch +
+    ' switchPickState=' + swState + ' challenge=' + sawChallenge +
+    '；decide actions=' + jsonOf(acts.filter(function (a) { return a.type === 'decide'; })) +
+    '；诊断=' + (x43Diag ? jsonOf(x43Diag) : 'n/a'));
 
   /* 4) c → 收手（decide.cashout 或 settle.cashout 都算合法路由） */
   var cashBefore = acts.filter(function (a) { return (a.type === 'decide' || a.type === 'settle') && a.choice === 'cashout'; }).length;
   if (KGame.state.phase !== 'DECIDE') await nextDecide();
+  if (KGame.state.flags && KGame.state.flags.switchPick) KGame.cancelSwitch();
   fireKey('m');                 /* 此刻无弹层：弹层打开时 keydown 只认空格/回车（契约 §4.2 弹层优先） */
-  await untilMs(function () { return acts.filter(function (a) { return a.type === 'toggle_mute'; }).length >= 1; }, 1000);
+  await untilMs(function () { return acts.filter(function (a) { return a.type === 'toggle_mute'; }).length >= 1; }, 1500);
   fireKey('c');
-  await untilMs(function () { return KGame.state.phase !== 'DECIDE'; }, 4000);
+  await untilMs(function () { return KGame.state.phase !== 'DECIDE'; }, 5000);
   var cashAfter = acts.filter(function (a) { return (a.type === 'decide' || a.type === 'settle') && a.choice === 'cashout'; }).length;
   c('X4.4', cashAfter > cashBefore,
     'DECIDE 阶段按 "c" → 收手路由（decide/settle 的 cashout）',
     'cashout 次数 ' + cashBefore + ' → ' + cashAfter + '；phase=' + KGame.state.phase);
 
   /* 5) m → toggle_mute（此刻无弹层，见上面 X4.4 前的说明） */
-  fireKey('m');
   c('X4.5', actsOf('toggle_mute').length >= 1,
     '按 "m" → Game.action({type:"toggle_mute"})（键盘与按钮同一入口）',
     'toggle_mute=' + actsOf('toggle_mute').length + '；flags.muted=' + !!(KGame.state.flags && KGame.state.flags.muted));
@@ -756,23 +806,26 @@ if (!kp || !K || !K.Game || !K.UI) {
     '信息弹层上按 "Esc" → UI.closeModal 被调用且 #modal 隐藏（契约 §4.2）',
     escInfoErr ? ('页面/探针异常：' + escInfoErr) : jsonOf(escInfo));
 
-  /* X4.7b：必选流程弹层（这里的 kp 已停在 CASHOUT 结算层）不被 Esc 绕过 */
+  /* X4.7b：必选流程弹层（X4.4 的 c 已把局面推到 CASHOUT 结算层）不被 Esc 绕过 */
+  var gotMand = await untilMs(function () {
+    return KGame.state.phase === 'CASHOUT' || KGame.state.phase === 'SETTLE_ROUND' || KGame.state.phase === 'GAME_OVER';
+  }, 8000);
   var mandModal = kp.doc.getElementById('modal');
   var mandPhase = KGame.state.phase;
   var closedBefore = closed;
   fireKey('Escape');
   await untilMs(function () { return false; }, 250);
-  c('X4.7b', (mandPhase === 'CASHOUT' || mandPhase === 'SETTLE_ROUND' || mandPhase === 'GAME_OVER') &&
+  c('X4.7b', gotMand && (mandPhase === 'CASHOUT' || mandPhase === 'SETTLE_ROUND' || mandPhase === 'GAME_OVER') &&
     closed === closedBefore && !!(mandModal && mandModal.hidden === false),
     '必选流程弹层（CASHOUT/SETTLE_ROUND/GAME_OVER）不被 Esc 绕过：closeModal 不增、弹层仍在（契约 §4.2 注）',
     'phase=' + mandPhase + ' closeModal ' + closedBefore + ' → ' + closed +
     '；modal.hidden=' + (mandModal ? mandModal.hidden : 'null'));
 
-  /* X4.8：空格 = 开始 / 继续（契约 §4.2） */
+  /* X4.8：空格 = 继续（此刻必选结算弹层仍在，空格应路由到 modal_choice / settle） */
   var beforeSpace = acts.length;
   var phaseBeforeSpace = KGame.state.phase;
   fireKey(' ');
-  await untilMs(function () { return KGame.state.phase !== phaseBeforeSpace; }, 4000);
+  await untilMs(function () { return acts.length > beforeSpace || KGame.state.phase !== phaseBeforeSpace; }, 4000);
   var spaceActs = acts.slice(beforeSpace);
   c('X4.8', spaceActs.some(function (a) { return a.type === 'start' || a.type === 'modal_choice' || a.type === 'settle'; }) ||
     KGame.state.phase !== phaseBeforeSpace,

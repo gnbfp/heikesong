@@ -3,14 +3,15 @@
  * ----------------------------------------------------------------------------
  * 真实命令：node tests/run-all.js
  *
- * 【默认跑的 7 个套件】
+ * 【默认跑的 8 个套件】
  *   1. tools/build-data.js --check   data/*.json ↔ js/data.js 产物一致性（预防「改了数据没重建」的假绿）
  *   2. tests/sim.js                  无头逻辑：状态机/RNG/结算/整局/存档/离线自包含
  *   3. tests/shop.js                 商店契约（经济/限购/道具/换门/闭嘴卡/保险丝/结算页），依赖真实 js/*
  *   4. tests/features.js             契约 v3 新玩法（claim/连击/怀疑值/8 档结局/提词器/音频/图鉴），依赖真实 js/*
- *   5. tests/ux.js                   契约 v4 体验（成就/统计/种子重放/键盘/人格/引导/竖屏/离线），依赖真实 js/*
- *   6. tests/dom-smoke.js            Node DOM 垫片：真实 index.html + js/*.js 渲染与交互
- *   7. tests/headless-check.js       无头 Edge file:// 端到端（浏览器不可用则整段 SKIP）
+ *   5. tests/home.js                 契约 v6 首页与规则修正（空门池 1000 样本/质疑提示/两段式换门/钱包/升级/难度/首页 DOM）
+ *   6. tests/ux.js                   契约 v4 体验（成就/统计/种子重放/键盘/人格/引导/竖屏/离线），依赖真实 js/*
+ *   7. tests/dom-smoke.js            Node DOM 垫片：真实 index.html + js/*.js 渲染与交互
+ *   8. tests/headless-check.js       无头 Edge file:// 端到端（浏览器不可用则整段 SKIP）
  *
  * 【SKIP 的含义】SKIP = 该条断言在当前环境无法执行/无意义（不是通过，也不是失败）：
  *   - headless-check.js 的 H* 在无浏览器沙箱里整段 SKIP，替代证据由 tests/dom-smoke.js 与
@@ -28,7 +29,7 @@
  *   两种模式下脚本都会在结尾「未覆盖项（SKIP）明细」区逐条点名 SKIP 的 id / 套件 / 原因，
  *   便于无人值守时一眼看出到底缺什么证据。
  *
- * 【假绿自证（按需跑，不在默认 7 个套件里）】
+ * 【假绿自证（按需跑，不在默认 8 个套件里）】
  *   node tests/mutation-proof.js         # 在 os.tmpdir() 的整仓副本里变异：①data/items.json 数值漂移
  *                                        #   ①b 只改 desc 文案 ②去掉 js/game.js 剧本门位校验
  *                                        #   ③js/ui.js 不再标 .is-poor ④即时商品不扣钱；
@@ -63,6 +64,10 @@ var SUITES = [
   {
     name: 'features.js（契约 v3 新玩法：线索 claim/连击/怀疑值/结局矩阵/提词器/音频/图鉴可达）',
     file: 'features.js', label: 'node tests/features.js'
+  },
+  {
+    name: 'home.js（契约 v6 首页与规则修正：空门池/质疑提示/两段式换门/钱包/升级/难度/首页 DOM）',
+    file: 'home.js', label: 'node tests/home.js'
   },
   {
     name: 'ux.js（契约 v4 体验：成就判定/统计/种子重放/键盘/人格/引导/竖屏/离线）',

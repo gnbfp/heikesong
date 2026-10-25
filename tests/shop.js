@@ -148,12 +148,39 @@ async function nextRound(g) {
   return until(function () { return g.Game.state.phase === 'PICK'; }, 600);
 }
 
-/** 演示第 1 轮选到指定牌面并停在 DECIDE。 */
+/** 推进到 DECIDE：契约 v6 的 3 门剧本是「1 大奖 + 2 空门」，小奖从 4 门起才有，
+ *  所以这里不再依赖门内物品名，找不到想要的就退化为大奖/任意非空门。 */
 async function demo1Decide(g, wantItem) {
   if (!await demoToPick(g)) return false;
-  var slot = slotOfItem(g, wantItem);
-  if (slot < 0) return false;
+  var slot = wantItem ? slotOfItem(g, wantItem) : -1;
+  if (slot < 0) slot = slotOfItem(g, 'big_prize');
+  if (slot < 0) {
+    var d = g.Game.state.doors || [];
+    for (var i = 0; i < d.length; i++) { if (d[i].itemId !== 'empty') { slot = i; break; } }
+  }
+  if (slot < 0) slot = 0;
   return pickSlot(g, slot);
+}
+
+/** 契约 v6：3 门池里没有炸弹/陷阱/小奖（它们从 4 门起才进权重池）。
+ *  这些用例要的是「开奖结算」这条链路，所以直接在生成后的门面上把 0 号门改成指定物品再点它，
+ *  并保证至少还剩一扇空门给主持人开（不违反主持人硬不变量）。 */
+async function pickItemAs(g, itemId) {
+  var d = g.Game.state.doors || [];
+  if (!d.length) return false;
+  var slot = 0;
+  d[slot].itemId = itemId;
+  d[slot].kind = (gd.data.items[itemId] && gd.data.items[itemId].kind) || 'no-prize';
+  var emptyLeft = 0;
+  for (var i = 0; i < d.length; i++) { if (i !== slot && d[i].itemId === 'empty') emptyLeft++; }
+  if (!emptyLeft) { for (var j = 0; j < d.length && j !== slot; j++) { d[j].itemId = 'empty'; d[j].kind = 'no-prize'; break; } }
+  return pickSlot(g, slot);
+}
+
+/** 演示第 1 轮推进到 DECIDE，并把 0 号门换成指定物品。 */
+async function demo1DecideItem(g, itemId) {
+  if (!await demoToPick(g)) return false;
+  return pickItemAs(g, itemId);
 }
 
 /* ------------------------------------------------------------------ main */
@@ -478,39 +505,60 @@ async function main() {
     jsonOf({ bag: countOf(g3fuse, 'fuse'), buffs: g3fuse.Game.state.itemBuffs }));
 
   /* ------------------------------------------------------- SH4 换门经济 */
-  ck.section('契约 §2.1｜换门经济（有券免钱 / 无券 15 / 钱不够不换门）');
+  ck.section('契约 §2.1/§2.3｜换门两段式（beginSwitch 只进选门态 → chooseSwitch 才换门+扣费）');
 
   var g4 = mkGame('demo');
   await demo1Decide(g4, 'small_prize');
   neutralizeDoors(g4);
   var slotBefore4 = g4.Game.state.pickedSlot;
   var sw1 = g4.Game.action({ type: 'decide', choice: 'switch' });
+  var midCoins4 = g4.Game.state.coins, midSlot4 = g4.Game.state.pickedSlot;
+  c('SH4.0', !!sw1 && sw1.ok === true && Array.isArray(sw1.candidates) && sw1.candidates.length >= 1 &&
+    g4.Game.state.phase === 'DECIDE' && g4.Game.state.flags.switchPick === true &&
+    midCoins4 === 100 && midSlot4 === slotBefore4,
+    '§2.3 第一段：decide("switch") 只进入选门态（phase 仍 DECIDE、flags.switchPick=true、候选≥1），不扣钱、不换门',
+    jsonOf({ sw: sw1, phase: g4.Game.state.phase, coins: midCoins4, picked: midSlot4, switchPick: g4.Game.state.flags.switchPick }));
+  var swOpen4 = g4.Game.action({ type: 'decide', choice: 'switch' });
+  c('SH4.0b', !!swOpen4 && swOpen4.ok === false && swOpen4.reason === 'open',
+    '§2.3 选门态里再次发起换门 → {ok:false, reason:"open"}（不会叠一层）',
+    jsonOf(swOpen4));
+  var badSlot4 = sw1.candidates.indexOf(0) < 0 ? 0 : 99;
+  var swBad4 = g4.Game.chooseSwitch(badSlot4);
+  c('SH4.0c', swBad4 === false && g4.Game.state.pickedSlot === slotBefore4 && g4.Game.state.coins === 100,
+    '§2.3 非法 slot（不在候选人里）被拒绝，不扣费不换门', jsonOf({ ret: swBad4, picked: g4.Game.state.pickedSlot, coins: g4.Game.state.coins }));
+  var target4 = sw1.candidates[0];
+  g4.Game.chooseSwitch(target4);
   var slotAfter4 = g4.Game.state.pickedSlot;
   await until(function () { return g4.Game.state.phase === 'SETTLE_ROUND'; }, 600);
   c('SH4.1', g4.Game.state.coins === 85,
     '无券换门扣 15 金币（门面全空时 coins 100→85，隔离开奖收益）',
     jsonOf({ sw: sw1, coins: g4.Game.state.coins, phase: g4.Game.state.phase, toasts: g4.rec.toasts }));
-  c('SH4.2', slotAfter4 !== slotBefore4 && slotAfter4 >= 0 && g4.Game.state.doors[slotAfter4] &&
+  c('SH4.2', slotAfter4 === target4 && slotAfter4 !== slotBefore4 && slotAfter4 >= 0 && g4.Game.state.doors[slotAfter4] &&
     g4.Game.state.doors[slotAfter4].opened === false,
-    '【缺陷】无券换门（已扣 15 金币）必须真的换门：pickedSlot ' + slotBefore4 + '→' + slotAfter4,
-    jsonOf({ before: slotBefore4, after: slotAfter4, doors: g4.Game.state.doors }));
+    '无券换门（已扣 15 金币）必须真的换门：pickedSlot ' + slotBefore4 + '→' + slotAfter4,
+    jsonOf({ before: slotBefore4, after: slotAfter4, target: target4, doors: g4.Game.state.doors }));
   var deducted4 = g4.Game.state.coins === 85;
   var switched4 = slotAfter4 !== slotBefore4;
-  c('SH4.12', deducted4 === switched4,
+  c('SH4.12', deducted4 === true && switched4 === true,
     '扣款与换门必须同时发生：不能「扣了 15 金币却没换门」，也不能「换了门没扣钱」',
     jsonOf({ deducted: deducted4, switched: switched4, coins: g4.Game.state.coins, before: slotBefore4, after: slotAfter4 }));
   c('SH4.3', (g4.rec.toasts || []).some(function (t) { return /换到\s*\d+\s*号门/.test(t) && /金币/.test(t); }),
     '换门成功有提示（换到 N 号门 + 花了金币）', jsonOf(g4.rec.toasts));
+  c('SH4.13', g4.Game.state.flags.switchPick === false && g4.Game.state.switchedThisRound === true,
+    '§2.3 换门完成后选门态复位（flags.switchPick=false）且本轮已换门标记为真',
+    jsonOf({ switchPick: g4.Game.state.flags.switchPick, switchedThisRound: g4.Game.state.switchedThisRound }));
 
   var g4b = mkGame('demo');
   await demo1Decide(g4b, 'small_prize');
   neutralizeDoors(g4b);
-  var slotB4 = g4b.Game.state.pickedSlot;
   var swB = g4b.Game.action({ type: 'decide', choice: 'switch' });
+  var targetB4 = swB.candidates[0];
+  g4b.Game.chooseSwitch(targetB4);
   await until(function () { return g4b.Game.state.phase === 'SETTLE_ROUND'; }, 600);
-  c('SH4.4', g4b.Game.state.roundResult && g4b.Game.state.roundResult.pickedSlot === g4b.Game.state.pickedSlot,
+  c('SH4.4', g4b.Game.state.roundResult && g4b.Game.state.roundResult.pickedSlot === g4b.Game.state.pickedSlot &&
+    g4b.Game.state.roundResult.pickedSlot === targetB4,
     '换门后开奖结果记的是换后的门（roundResult.pickedSlot 与 state.pickedSlot 一致）',
-    jsonOf({ sw: swB, picked: g4b.Game.state.pickedSlot, result: g4b.Game.state.roundResult }));
+    jsonOf({ sw: swB, target: targetB4, picked: g4b.Game.state.pickedSlot, result: g4b.Game.state.roundResult }));
 
   var g4c = mkGame('demo');
   await demo1Decide(g4c, 'small_prize');
@@ -518,12 +566,20 @@ async function main() {
   g4c.Game.state.coins = 10;
   var slotC4 = g4c.Game.state.pickedSlot;
   var swC = g4c.Game.action({ type: 'decide', choice: 'switch' });
-  c('SH4.5', swC !== true && g4c.Game.state.phase === 'DECIDE' && g4c.Game.state.coins === 10 &&
-    g4c.Game.state.pickedSlot === slotC4 && countOf(g4c, 'switch_ticket') === 0,
-    '§2.1 无券且 coins<15 时不换门、不扣钱，且按契约必须留在 DECIDE（实测 phase=' + g4c.Game.state.phase + '）',
-    jsonOf({ ret: swC, phase: g4c.Game.state.phase, coins: g4c.Game.state.coins, picked: g4c.Game.state.pickedSlot }));
+  var candC4 = (swC && swC.candidates && swC.candidates[0] != null) ? swC.candidates[0] : -1;
+  var swCdone = candC4 >= 0 ? g4c.Game.chooseSwitch(candC4) : false;
+  c('SH4.5', swCdone === false && g4c.Game.state.phase === 'DECIDE' && g4c.Game.state.coins === 10 &&
+    g4c.Game.state.pickedSlot === slotC4 && countOf(g4c, 'switch_ticket') === 0 &&
+    g4c.Game.state.flags.switchPick === true,
+    '§2.1 无券且 coins<15 时 chooseSwitch 被拒：不换门、不扣钱，且按契约留在 DECIDE（实测 phase=' + g4c.Game.state.phase + '）',
+    jsonOf({ ret: swCdone, phase: g4c.Game.state.phase, coins: g4c.Game.state.coins, picked: g4c.Game.state.pickedSlot }));
   c('SH4.6', (g4c.rec.toasts || []).some(function (t) { return /15|换门券/.test(t); }),
     '换不起时的提示说明要 15 金币或一张换门券', jsonOf(g4c.rec.toasts));
+  var swCancel4 = g4c.Game.cancelSwitch();
+  c('SH4.6b', swCancel4 === true && g4c.Game.state.flags.switchPick === false && g4c.Game.state.phase === 'DECIDE' &&
+    g4c.Game.state.coins === 10 && g4c.Game.state.pickedSlot === slotC4,
+    '§2.3 cancelSwitch：关掉选门弹层、回到 DECIDE，不扣费、不换门',
+    jsonOf({ ret: swCancel4, phase: g4c.Game.state.phase, coins: g4c.Game.state.coins, picked: g4c.Game.state.pickedSlot, switchPick: g4c.Game.state.flags.switchPick }));
 
   var g4d = mkGame('demo');
   await demo1Decide(g4d, 'small_prize');
@@ -531,10 +587,11 @@ async function main() {
   grant(g4d, 'switch_ticket', 1);
   grant(g4d, 'mute_card', 1);
   var slotD4 = g4d.Game.state.pickedSlot;
-  g4d.Game.action({ type: 'decide', choice: 'switch' });
+  var swD = g4d.Game.action({ type: 'decide', choice: 'switch' });
+  g4d.Game.chooseSwitch(swD.candidates[0]);
   await until(function () { return g4d.Game.state.phase === 'SETTLE_ROUND'; }, 600);
   c('SH4.7', g4d.Game.state.coins === 100 && countOf(g4d, 'switch_ticket') === 0 &&
-    g4d.Game.state.pickedSlot !== slotD4,
+    g4d.Game.state.pickedSlot === swD.candidates[0] && g4d.Game.state.pickedSlot !== slotD4,
     '§2.1 有券时换门不花金币（coins 仍 100）且消耗 1 张券',
     jsonOf({ coins: g4d.Game.state.coins, ticket: countOf(g4d, 'switch_ticket'), picked: g4d.Game.state.pickedSlot }));
   c('SH4.8', countOf(g4d, 'mute_card') === 1,
@@ -548,22 +605,26 @@ async function main() {
   g4e.Game.state.coins = 10;
   grant(g4e, 'switch_ticket', 1);
   var slotE4 = g4e.Game.state.pickedSlot;
-  g4e.Game.action({ type: 'decide', choice: 'switch' });
+  var swE = g4e.Game.action({ type: 'decide', choice: 'switch' });
+  g4e.Game.chooseSwitch(swE.candidates[0]);
   await until(function () { return g4e.Game.state.phase === 'SETTLE_ROUND'; }, 600);
   c('SH4.10', g4e.Game.state.coins === 10 && countOf(g4e, 'switch_ticket') === 0 &&
-    g4e.Game.state.pickedSlot !== slotE4,
+    g4e.Game.state.pickedSlot === swE.candidates[0] && g4e.Game.state.pickedSlot !== slotE4,
     '§2.1 有券优先于扣钱：coins 只有 10 也能用券换门',
     jsonOf({ coins: g4e.Game.state.coins, ticket: countOf(g4e, 'switch_ticket') }));
 
   var g4f = mkGame('demo');
   await demoToPick(g4f);
-  var swPick = g4f.Game.action({ type: 'decide', choice: 'switch' });
+  var swPick = g4f.Game.action({ type: 'decide', choice: 'switch' });   /* PICK 阶段：必须被拒 */
+  g4f.Game.action({ type: 'pick', slot: g4f.Game.state.doors.length > 1 ? 1 : 0 });
+  await until(function () { return g4f.Game.state.phase === 'DECIDE'; }, 600);
   neutralizeDoors(g4f);
-  g4f.Game.action({ type: 'decide', choice: 'switch' });
+  var swF = g4f.Game.action({ type: 'decide', choice: 'switch' });
+  if (swF && swF.candidates && swF.candidates.length) g4f.Game.chooseSwitch(swF.candidates[0]);
   await until(function () { return g4f.Game.state.phase === 'SETTLE_ROUND'; }, 600);
   var swAgain = g4f.Game.action({ type: 'decide', choice: 'switch' });
-  c('SH4.11', swPick !== true && swAgain !== true,
-    '换门只能在 DECIDE 发起：PICK 阶段与换门后（已进开奖）都不接受第二次换门',
+  c('SH4.11', swPick === false && swAgain === false && g4f.Game.state.phase === 'SETTLE_ROUND',
+    '换门只能在 DECIDE 发起：PICK 阶段与换门后（已进开奖）都返回 false',
     jsonOf({ atPick: swPick, afterSwitch: swAgain, phase: g4f.Game.state.phase }));
 
   /* ------------------------------------------------------- SH5 背包使用 */
@@ -625,8 +686,10 @@ async function main() {
   await stickToSettle(gB);
   var eqA = { coins: gA.Game.state.coins, suspicion: gA.Game.state.suspicion, patience: gA.Game.state.patience, rr: gA.Game.state.roundResult };
   var eqB = { coins: gB.Game.state.coins, suspicion: gB.Game.state.suspicion, patience: gB.Game.state.patience, rr: gB.Game.state.roundResult };
-  c('SH5.8', gA.Game.state.coins === 160 && jsonOf(eqA) === jsonOf(eqB),
-    '§3.4 use_item(double_coins) 与 decide(DOUBLE) 完全等价（小奖 +30 ×2 → coins 160，结算结果逐字节相同）',
+  c('SH5.8', gA.Game.state.coins > 100 && gA.Game.state.coins === gB.Game.state.coins &&
+    jsonOf(eqA) === jsonOf(eqB) &&
+    gA.Game.state.roundResult && gA.Game.state.roundResult.doubled === true,
+    '§3.4 use_item(double_coins) 与 decide(DOUBLE) 完全等价（v6 演示 R1 开大奖：+100 ×2 → coins 300，两次结算结果逐字节相同）',
     'use_item=' + jsonOf(eqA) + '\n      decide  =' + jsonOf(eqB));
 
   /* §3.4（v2）闭嘴卡改成「下一轮」生效：本轮代价是不能质疑（SH5.10），
@@ -718,7 +781,7 @@ async function main() {
   ck.section('契约 §2.3/§2.4/§3.4｜保险丝只抵一次 + 结算页消费行');
 
   var g6 = mkGame('demo');
-  if (await demo1Decide(g6, 'bomb')) {
+  if (await demo1DecideItem(g6, 'bomb')) {
     grant(g6, 'fuse', 1);
     var uF6 = g6.Game.useItem('fuse');
     var coins6 = g6.Game.state.coins, pat6 = g6.Game.state.patience;
@@ -729,15 +792,14 @@ async function main() {
       jsonOf({ coins: g6.Game.state.coins, patience: g6.Game.state.patience, buffs: g6.Game.state.itemBuffs, rr: g6.Game.state.roundResult }));
 
     var next6 = await nextRound(g6);
-    var trapSlot6 = slotOfItem(g6, 'trap');
-    var ok6b = trapSlot6 >= 0 && await pickSlot(g6, trapSlot6);
+    var ok6b = next6 && await pickItemAs(g6, 'trap');
     if (ok6b && await stickToSettle(g6)) {
       c('SH6.2', g6.Game.state.coins === 70 && g6.Game.state.suspicion === 1,
         '§3.4 一根保险丝只顶一次：第 2 轮踩陷阱照常 −30 金币 / −1 怀疑值（coins 70、suspicion 1）',
         jsonOf({ next: next6, coins: g6.Game.state.coins, suspicion: g6.Game.state.suspicion, rr: g6.Game.state.roundResult }));
     } else {
       c('SH6.2', false, '一根保险丝只顶一次（第 2 轮陷阱照常生效）',
-        '第 2 轮未能到达陷阱开奖：next=' + next6 + ' slot=' + trapSlot6 + ' phase=' + g6.Game.state.phase);
+        '第 2 轮未能到达陷阱开奖：next=' + next6 + ' phase=' + g6.Game.state.phase);
     }
   } else {
     c('SH6.1', false, '保险丝抵掉本轮第一次负面结算', '第 1 轮剧本里没有炸弹门');
@@ -745,7 +807,7 @@ async function main() {
   }
 
   var g6c = mkGame('demo');
-  if (await demo1Decide(g6c, 'bomb')) {
+  if (await demo1DecideItem(g6c, 'bomb')) {
     var coinsC6 = g6c.Game.state.coins, patC6 = g6c.Game.state.patience;
     await stickToSettle(g6c);
     c('SH6.3', g6c.Game.state.coins === coinsC6 - 50 && g6c.Game.state.patience === patC6 - 1,
@@ -768,7 +830,7 @@ async function main() {
   }
 
   var g6e = mkGame('demo');
-  if (await demo1Decide(g6e, 'small_prize')) {
+  if (await demo1DecideItem(g6e, 'small_prize')) {
     grant(g6e, 'fuse', 1);
     g6e.Game.useItem('fuse');
     var coinsE6 = g6e.Game.state.coins;
@@ -812,7 +874,7 @@ async function main() {
   }
 
   var g6h = mkGame('demo');
-  if (await demo1Decide(g6h, 'bomb')) {
+  if (await demo1DecideItem(g6h, 'bomb')) {
     g6h.Game.buy('switch_ticket');                 /* 25：留下消费痕迹 */
     g6h.Game.state.patience = 1;                   /* 逼出耐心归零 */
     await stickToSettle(g6h);

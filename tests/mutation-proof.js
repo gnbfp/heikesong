@@ -181,8 +181,8 @@ record('复原 ③ 后 dom-smoke.js 重新变绿', dom3b.code === 0,
 
 /* ---------------- 变异 ④：商店经济（即时商品不扣钱） ---------------- */
 console.log('\n— 变异 ④：让 js/game.js 的即时商品购买不扣金币（经济结算回归） —');
-var anchor4 = "{ id: 'shop_buy', label: def.name, coins: -def.price }, { multiplier: 1, source: 'shop' }";
-var t4 = gameOrig.replace(anchor4, "{ id: 'shop_buy', label: def.name, coins: 0 }, { multiplier: 1, source: 'shop' }");
+var anchor4 = "{ id: 'shop_buy', label: def.name, coins: -price }";
+var t4 = gameOrig.replace(anchor4, "{ id: 'shop_buy', label: def.name, coins: 0 }");
 var mutated4 = t4 !== gameOrig && t4 !== t2;
 fs.writeFileSync(gamePath, t4, 'utf8');
 record('变异 ④ 已生效（即时商品扣款 0）', mutated4, '锚点替换=' + mutated4);

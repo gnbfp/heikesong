@@ -442,8 +442,24 @@ function mkGame(mode, over) {
   return { Game: G.Game, ui: ui, rec: ui.rec, deps: deps };
 }
 
-var PICK_BY_ROUND = ['small_prize', 'big_prize', 'big_prize'];
+/* 契约 v6 §2.1：演示剧本由 data/seed_demo.json 决定（门数可变 3/4/5/6，物品组合也可能变），
+   所以「玩家该点哪扇」按优先级从**实时牌面**推导，绝不硬编码物品名或槽位。 */
+var PICK_PRIORITY = ['big_prize', 'small_prize'];
+var PICK_HAZARDS = ['bomb', 'trap', 'landmine', 'quicksand'];
 var DEMO_ROUNDS = (gd.data.seedDemo && gd.data.seedDemo.rounds) || [];
+
+/** 从实时 doors 推出「玩家该选哪扇」：优先大奖，其次小奖，再次任一非危险门，兜底 0 号。 */
+function demoPickSlot(roundIdx, doors) {
+  var i;
+  for (i = 0; i < PICK_PRIORITY.length; i++) {
+    var s = doors.indexOf(PICK_PRIORITY[i]);
+    if (s >= 0) return { wantPick: PICK_PRIORITY[i], slot: s, scriptSlot: (DEMO_ROUNDS[roundIdx - 1] || {}).hostOpensSlot };
+  }
+  for (i = 0; i < doors.length; i++) {
+    if (PICK_HAZARDS.indexOf(doors[i]) < 0) return { wantPick: doors[i], slot: i, scriptSlot: (DEMO_ROUNDS[roundIdx - 1] || {}).hostOpensSlot };
+  }
+  return { wantPick: doors[0], slot: 0, scriptSlot: (DEMO_ROUNDS[roundIdx - 1] || {}).hostOpensSlot };
+}
 
 /**
  * 用真实玩家动作驱动演示剧本三轮（不依赖 game.js 的 autoDemo）：
@@ -462,17 +478,18 @@ async function driveDemo(over) {
   for (var r = 1; r <= 3; r++) {
     var st = Game.state;
     var doors = st.doors.map(function (d) { return d.itemId; });
-    var wantPick = PICK_BY_ROUND[r - 1];
-    var slot = doors.indexOf(wantPick);
+    var pickInfo = demoPickSlot(r, doors);
+    var slot = pickInfo.slot;
     var row = {
-      round: r, doors: doors, wantPick: wantPick, pickedSlot: slot,
+      round: r, doors: doors, wantPick: doors[slot], scriptDoors: (DEMO_ROUNDS[r - 1] || {}).doors || null,
+      pickedSlot: slot,
       coinsBefore: st.coins, suspicionBefore: st.suspicion, patienceBefore: st.patience,
       rendersBefore: rec.renders
     };
-    if (slot < 0) { row.error = '剧本门面不含 ' + wantPick; trace.rounds.push(row); break; }
 
-    /* 主持人「本来会」开哪扇（纯函数对照，用于判定剧本是否违反开空门规则） */
-    row.hostPickWouldBe = Game.hostPick(st.doors, slot);
+    /* 主持人「本来会」开哪扇（契约 v6 §2.2：hostPick(state) 单参，读 state.doors/state.pickedSlot） */
+    st.pickedSlot = slot;
+    row.hostPickWouldBe = Game.hostPick(st);
     row.hostPickWouldBeItem = row.hostPickWouldBe == null ? null : st.doors[row.hostPickWouldBe].itemId;
 
     var hostOpensBefore = rec.hostOpens.length;   /* 必须在 pick 之前取快照，否则本轮记录会被算进基线 */
@@ -663,44 +680,53 @@ async function main() {
     '，即 lead 确认的冻结语义「只保证开非大奖门、优先空门」在退化时不会穿帮',
     'degChecked=' + degChecked + ' 期望=' + (onlyEmptyPicked + noEmptyBoard) + ' 违规=' + jsonOf(degBad));
 
-  /* G1.4 阶段 1 P0：普通模式第 1 轮恰好 1 大奖 / 1 空门 / 1 小奖（且不含炸弹） */
-  var badR1 = [], sets = {};
+  /* G1.4 契约 v6 §2.1：3 门恒为 {大奖, 空门, 空门}（3 门不再出小奖，小奖从 4 门起） */
+  var badR1 = [], sets = {}, r1Small = 0, r1Bomb = 0;
   for (var sd = 0; sd < 30; sd++) {
     var gn = mkGame('normal', {});
     gn.Game.init({ mode: 'normal', doors: 3, seed: 1000 + sd, deps: gn.deps });
-    var dR1 = gn.Game.generateDoors(1).map(function (d) { return d.itemId; }).sort().join(',');
+    gn.Game.state.doorCount = 3;
+    var r1ids = gn.Game.generateDoors(1).map(function (d) { return d.itemId; });
+    var dR1 = r1ids.slice().sort().join(',');
     sets[dR1] = (sets[dR1] || 0) + 1;
-    if (dR1 !== 'big_prize,empty,small_prize') badR1.push('seed' + (1000 + sd) + ' → ' + dR1);
+    if (r1ids.indexOf('small_prize') >= 0) r1Small++;
+    if (r1ids.indexOf('bomb') >= 0) r1Bomb++;
+    if (dR1 !== 'big_prize,empty,empty') badR1.push('seed' + (1000 + sd) + ' → ' + dR1);
   }
-  ck.ok('G1.4', badR1.length === 0,
-    '普通模式第 1 轮 30 个种子全部为 {大奖, 空门, 小奖}（阶段 1 P0）',
-    badR1.slice(0, 3).join('；') + ' | 分布=' + jsonOf(sets));
+  ck.ok('G1.4', badR1.length === 0 && r1Small === 0 && r1Bomb === 0,
+    '契约 v6 §2.1：3 门 30 个种子全部为 {大奖, 空门, 空门}，且不含小奖/炸弹（3 门池无小奖）',
+    badR1.slice(0, 3).join('；') + ' | 分布=' + jsonOf(sets) + ' | 小奖 ' + r1Small + ' 例、炸弹 ' + r1Bomb + ' 例');
 
-  /* G1.5 第 2 轮起走权重池的不变量 */
+  /* G1.5 契约 v6 §2.1 发牌不变量：3–6 门，每局恰好 1 大奖 + ≥2 空门、槽位连续未开 */
   var g5 = mkGame('normal', {});
-  var badInv = [], dist = {};
-  for (var rd = 2; rd <= 8; rd++) {
-    for (var k2 = 0; k2 < 60; k2++) {
-      var ds2 = g5.Game.generateDoors(rd);
-      var idl = ds2.map(function (d) { return d.itemId; });
-      idl.forEach(function (id) { dist[id] = (dist[id] || 0) + 1; });
-      var top = idl.filter(function (id) { return id === 'big_prize'; }).length;
-      var nonTop = idl.filter(function (id) { return id !== 'big_prize'; }).length;
-      var empties = idl.filter(function (id) { return id === 'empty'; }).length;
-      var uniq2 = idl.filter(function (v, idx) { return idl.indexOf(v) === idx; }).length;
-      if (ds2.length !== 3) badInv.push('长度 ' + ds2.length);
-      else if (top > 1) badInv.push('2 个以上大奖：' + idl.join('/'));
-      else if (nonTop < 1) badInv.push('全是大奖：' + idl.join('/'));
-      else if (empties < 1) badInv.push('没有空门（主持人将无空门可开）：' + idl.join('/'));
-      else if (uniq2 !== 3) badInv.push('门面重复：' + idl.join('/'));
-      else if (ds2.some(function (d, idx) { return d.slot !== idx || d.opened || d.revealed; })) badInv.push('doors 结构异常');
+  var badInv = [], dist = {}, bombBy = { n3: 0, r1: 0, late: 0 }, smallBy = { n3: 0, r1: 0, late: 0 };
+  for (var nd = 3; nd <= 6; nd++) {
+    for (var rd = 1; rd <= 8; rd++) {
+      for (var k2 = 0; k2 < 40; k2++) {
+        g5.Game.state.doorCount = nd;
+        var ds2 = g5.Game.generateDoors(rd);
+        var idl = ds2.map(function (d) { return d.itemId; });
+        idl.forEach(function (id) { dist[id] = (dist[id] || 0) + 1; });
+        var top = idl.filter(function (id) { return id === 'big_prize'; }).length;
+        var empties = idl.filter(function (id) { return id === 'empty'; }).length;
+        var hasBomb = idl.indexOf('bomb') >= 0, hasSmall = idl.indexOf('small_prize') >= 0;
+        if (nd === 3) { if (hasBomb) bombBy.n3++; if (hasSmall) smallBy.n3++; }
+        else if (rd === 1) { if (hasBomb) bombBy.r1++; if (hasSmall) smallBy.r1++; }
+        else { if (hasBomb) bombBy.late++; if (hasSmall) smallBy.late++; }
+        if (ds2.length !== nd) badInv.push('长度 ' + ds2.length + '≠' + nd);
+        else if (top !== 1) badInv.push('大奖数 ' + top + '：' + idl.join('/'));
+        else if (empties < 2) badInv.push('空门 <2：' + idl.join('/'));
+        else if (ds2.some(function (d, idx) { return d.slot !== idx || d.opened || d.revealed; })) badInv.push('doors 结构异常');
+      }
     }
   }
   ck.ok('G1.5', badInv.length === 0,
-    '第 2–8 轮 420 次发牌全部满足不变量：3 扇不重复、≤1 大奖、≥1 非大奖、≥1 空门',
+    '第 1–8 轮 × 3–6 门共 1280 次发牌全部满足 v6 不变量：恰好 1 大奖、≥2 空门、槽位连续未开',
     badInv.slice(0, 4).join('；'));
-  ck.ok('G1.6', dist.bomb > 0, '第 2 轮起权重池确实会抽到炸弹（bomb.minRound=2，权重 10→轮4 起 22）',
-    '分布=' + jsonOf(dist));
+  ck.ok('G1.6', bombBy.n3 === 0 && smallBy.n3 === 0 && bombBy.r1 === 0 && bombBy.late > 0 && smallBy.late > 0,
+    '炸弹/小奖只从 4 门起、且炸弹第 1 轮不出现（3 门池 0 例；4–6 门第 1 轮炸弹 0 例；4–6 门第 2 轮起两者都出现）',
+    '炸弹 n3=' + bombBy.n3 + ' r1=' + bombBy.r1 + ' late=' + bombBy.late +
+    '；小奖 n3=' + smallBy.n3 + ' r1=' + smallBy.r1 + ' late=' + smallBy.late + '；分布=' + jsonOf(dist));
 
   /* G1.7 固定种子发牌确定性（普通模式同 seed 两次；Game 是单例，必须顺序跑） */
   var gA = mkGame('normal', {}); gA.Game.init({ mode: 'normal', doors: 3, seed: 424242, deps: gA.deps });
@@ -903,7 +929,8 @@ async function main() {
   G3.start('demo');
   await until(function () { return G3.state.phase === 'PICK'; });
   var bombSlot = G3.state.doors.map(function (d) { return d.itemId; }).indexOf('bomb');
-  G3.action({ type: 'pick', slot: bombSlot >= 0 ? bombSlot : 0 });
+  if (bombSlot < 0) { bombSlot = 0; G3.state.doors[0].itemId = 'bomb'; }   /* v6 剧本 R1 无炸弹门：注入（空门仍留给主持人） */
+  G3.action({ type: 'pick', slot: bombSlot });
   await until(function () { return G3.state.phase === 'DECIDE'; });
   G3.state.patience = 1;            /* 布置：耐心只剩 1 点 */
   var coinsBeforeBomb = G3.state.coins;
@@ -922,8 +949,9 @@ async function main() {
       '实际 phase=' + G3.state.phase + ' patience=' + G3.state.patience + ' 弹层=' + jsonOf(g3.rec.modals.map(function (m) { return m.kind; })));
     ck.eq('G3.2', G3.state.coins, coinsBeforeBomb - 50, '炸弹结算：金币 ' + coinsBeforeBomb + ' → ' + G3.state.coins);
     var goModal = lastModalOf(g3.rec, 'gameover');
-    ck.ok('G3.3', !!goModal && goModal.title === '耐心归零' && /耐心归零/.test(goModal.body || ''),
-      'GAME_OVER 弹层标题「耐心归零」且正文说明原因',
+    ck.ok('G3.3', !!goModal && typeof goModal.title === 'string' && goModal.title.length > 0 &&
+      /耐心|结束|死了|归零/.test(String(goModal.title) + String(goModal.body || '')),
+      'GAME_OVER 弹层标题非空且正文说明原因（v6 标题为「' + (goModal && goModal.title) + '」）',
       '实际 kind=' + (goModal && goModal.kind) + ' title=' + (goModal && goModal.title) + ' 全部弹层=' + jsonOf(g3.rec.modals.map(function (m) { return m.kind; })));
     ck.ok('G3.4', /非真实货币/.test((goModal && goModal.body) || ''), 'GAME_OVER 页含娱乐声明');
     /* 死屏回归防线：耐心归零后必须能一键回到演示起点（曾因 setState(REVEAL) 被 ALLOWED 拒绝而死屏） */
@@ -1191,6 +1219,7 @@ async function main() {
   ggo.Game.start('demo');
   await until(function () { return ggo.Game.state.phase === 'PICK'; });
   var bombAt = ggo.Game.state.doors.map(function (d) { return d.itemId; }).indexOf('bomb');
+  if (bombAt < 0) { bombAt = 0; ggo.Game.state.doors[0].itemId = 'bomb'; }   /* v6 剧本不保证有炸弹门：直接注入 */
   ggo.Game.action({ type: 'pick', slot: bombAt });
   await until(function () { return ggo.Game.state.phase === 'DECIDE'; });
   ggo.Game.state.patience = 1;
@@ -1198,8 +1227,8 @@ async function main() {
   var goShown = await until(function () { return !!lastModalOf(ggo.rec, 'gameover'); });
   var goModal2 = lastModalOf(ggo.rec, 'gameover');
   var goChoices = ((goModal2 && goModal2.actions) || []).map(function (a) { return a.choice; });
-  ck.ok('G6.12', goShown && goChoices.indexOf('restart') >= 0 && goChoices.indexOf('codex') >= 0,
-    '耐心归零页（gameover）确实弹层且按钮含「再来一局 / 看图鉴」',
+  ck.ok('G6.12', goShown && goChoices.indexOf('restart') >= 0 && goChoices.length >= 2,
+    '耐心归零页（gameover）确实弹层且按钮含「再来一局」+ 至少一个次级入口（v6 为升级商店；图鉴入口见 G6.13）',
     'phase=' + ggo.Game.state.phase + ' choices=' + goChoices.join(',') + ' coins=' + ggo.Game.state.coins);
 
   /* G6.13 图鉴弹层（showCodex）+ 清空按钮（action 路由里码是 modal_choice:codex） */
@@ -1428,12 +1457,19 @@ async function main() {
       });
       return innerPlay.call(ui8, slot, itemId);
     };
+    /* v6 剧本碰撞用例：把玩家在第 3 轮的选择强行改成「本轮剧本给主持人指定的那扇门」，
+       这样 hostOpensSlot 与 pickedSlot 撞车 → 引擎必须置 hostScriptFallback=true 并退化为真实 hostPick。
+       目标门位在**每次调用时**从实时 script() 读取（data/seed_demo.json 会被 content-data 改）。 */
     var origChoose = Game8.chooseDoor;
     Game8.chooseDoor = function (slot) {
       var s = Game8.state;
-      if (opts.forceR3Slot0 && s.round >= 3 && slot !== 0) {
-        injections.push({ round: s.round, from: slot, fromItem: s.doors[slot] && s.doors[slot].itemId, to: 0 });
-        slot = 0;
+      if (opts.collideLastRound && s.round >= 3) {
+        var scr8 = Game8.script ? Game8.script() : null;
+        var target8 = (scr8 && scr8.hostOpensSlot != null) ? scr8.hostOpensSlot : 0;
+        if (slot !== target8) {
+          injections.push({ round: s.round, from: slot, fromItem: s.doors[slot] && s.doors[slot].itemId, to: target8, scriptHost: target8 });
+          slot = target8;
+        }
       }
       return origChoose.call(Game8, slot);
     };
@@ -1457,17 +1493,19 @@ async function main() {
         ') 开' + r.host + '(' + r.hostItem + ')';
     })));
 
-  /* G8.1b lead 给的剧本碰撞用例：R3 门面 trap/big_prize/empty、剧本 hostOpensSlot=0、强制玩家选 slot0 */
-  var ht2 = await hostTrace({ forceR3Slot0: true });
+  /* G8.1b 剧本碰撞用例（不写死具体门位，跟随 data/seed_demo.json 的 hostOpensSlot）：
+     把第 3 轮玩家的选择强行改成剧本给主持人指定的那扇门 → 撞车 → 引擎必须退化并置 hostScriptFallback。 */
+  var ht2 = await hostTrace({ collideLastRound: true });
   var ht2Bad = ht2.rows.filter(function (r) {
     return r.host == null || r.host === r.picked || r.hostItem === 'big_prize' || r.opened !== true ||
       r.host !== r.stateHost;
   });
   var r3row = ht2.rows.filter(function (r) { return r.round === 3; })[0] || null;
-  ck.ok('G8.1b', ht2.injections.length >= 1 && !!r3row && r3row.picked === 0 && r3row.host !== 0 &&
-    r3row.hostItem !== 'big_prize' && r3row.host === 2 && r3row.scriptFallback === true && ht2Bad.length === 0,
-    'HOST-INVARIANT（剧本碰撞：R3 强制玩家选 slot0）第 3 轮门面 ' + (r3row ? r3row.doors.join('/') : '?') +
-    '，剧本 hostOpensSlot=0 与玩家所选门撞车 → 退化为真实 hostPick，开 ' +
+  var collideAsked = ht2.injections.length ? ht2.injections[0].to : null;
+  ck.ok('G8.1b', ht2.injections.length >= 1 && !!r3row && r3row.picked === collideAsked &&
+    r3row.host !== collideAsked && r3row.hostItem !== 'big_prize' && r3row.scriptFallback === true && ht2Bad.length === 0,
+    'HOST-INVARIANT（剧本碰撞：第 3 轮强制玩家选 hostOpensSlot=' + collideAsked + '）第 3 轮门面 ' +
+    (r3row ? r3row.doors.join('/') : '?') + '，剧本指定门与玩家所选门撞车 → 退化为真实 hostPick，开 ' +
     (r3row ? r3row.host + '(' + r3row.hostItem + ')' : '?') +
     '（不是玩家所选门、不是大奖，hostScriptFallback=true），三轮零违规',
     '注入=' + jsonOf(ht2.injections) + '；R3=' + jsonOf(r3row) + '；违规=' + jsonOf(ht2Bad));
@@ -1500,44 +1538,65 @@ async function main() {
     ' 次真实 pick 动作链路）：主持人所开门全部 ≠玩家所选门、≠大奖门、恰好开 1 扇',
     jsonOf(freeBad));
 
-  /* ---------- CHALLENGE-ONCE：同一轮第二次质疑必须被拒且不动数值，换轮后可再质疑 ---------- */
+  /* ---------- CHALLENGE-ONCE：同一轮第二次质疑必须被拒且不动数值，换轮后可再质疑 ----------
+     不写死「哪一轮有可拆穿的台词」：逐轮扫演示剧本，动态找出第一个 challenge 被受理的轮次
+     （契约 v6 的叙事里那是 R2 的「质疑反杀」），再验证该轮内「第二次 false 且数值零变化」。 */
   var g82 = mkGame('demo', {});
   var G82 = g82.Game;
   G82.start('demo');
-  var ok82 = await until(function () { return G82.state.phase === 'PICK'; }, 5000);
-  var slot82 = G82.state.doors.map(function (d) { return d.itemId; }).indexOf('small_prize');
-  G82.action({ type: 'pick', slot: slot82 });
-  await until(function () { return G82.state.phase === 'DECIDE'; }, 5000);
-  var c0 = G82.state.coins, sus0 = G82.state.suspicion, pat0 = G82.state.patience;
-  var first82 = G82.action({ type: 'decide', choice: 'challenge' });
-  var lc1 = G82.state.lastChallenge || {};
-  var c1 = G82.state.coins, sus1 = G82.state.suspicion, flag1 = G82.state.challengedThisRound;
-  var second82 = G82.action({ type: 'decide', choice: 'challenge' });
-  var c2 = G82.state.coins, sus2 = G82.state.suspicion;
-  var r1DeltaOk = lc1.ok ? (c1 === c0 + 20) : (c1 === c0 - 20 && G82.state.patience === pat0 - 1);
-  G82.action({ type: 'decide', choice: 'stick' });
-  await until(function () { return G82.state.phase === 'SETTLE_ROUND'; }, 5000);
-  G82.action({ type: 'settle', choice: 'continue' });
-  var okR2 = await until(function () { return G82.state.round === 2 && G82.state.phase === 'PICK'; }, 5000);
-  var slotR2 = G82.state.doors.map(function (d) { return d.itemId; }).indexOf('big_prize');
-  G82.action({ type: 'pick', slot: slotR2 });
-  await until(function () { return G82.state.phase === 'DECIDE'; }, 5000);
-  var flagR2 = G82.state.challengedThisRound, susR2Before = G82.state.suspicion;
-  var third82 = G82.action({ type: 'decide', choice: 'challenge' });
-  var susR2After = G82.state.suspicion;
-  var okChalR2 = !!(G82.state.lastChallenge && G82.state.lastChallenge.ok);
-  ck.ok('G8.2', ok82 && first82 === true && second82 === false && c2 === c1 && sus2 === sus1 && flag1 === true &&
-    r1DeltaOk && sus1 === sus0 - 1 && okR2 && flagR2 === false && third82 === true &&
-    susR2After === susR2Before - 1 && okChalR2 === true,
-    'CHALLENGE-ONCE：R1 第 1 次质疑 true（金币 ' + c0 + '→' + c1 + '、怀疑值 ' + sus0 + '→' + sus1 + '，' +
-    (lc1.ok ? '拆穿成功 +20' : '拆穿失败 −20 且耐心 −1') + '），第 2 次 false 且金币/怀疑值完全不变（' +
-    c2 + '/' + sus2 + '）；换到 R2 后 challengedThisRound 已重置，第 3 次质疑 true 且演示 R2 的「质疑反杀」仍成立' +
-    '（怀疑值 ' + susR2Before + '→' + susR2After + '，lastChallenge.ok=' + okChalR2 + '）',
-    'first=' + first82 + ' second=' + second82 + ' c1=' + c1 + ' c2=' + c2 + ' sus2=' + sus2 +
-    ' R1flag=' + flag1 + ' R1ok=' + lc1.ok + ' R2flag=' + flagR2 + ' third=' + third82 +
-    ' R2ok=' + okChalR2 + ' R2怀疑=' + susR2Before + '→' + susR2After + ' okR2=' + okR2);
+  var rounds82 = [], err82 = null, claimRound = null, nextOfClaim = null, deltaOk82 = false;
+  try {
+    for (var rr82 = 1; rr82 <= 3; rr82++) {
+      var okP82 = await until(function () { return G82.state.phase === 'PICK'; }, 6000);
+      if (!okP82) break;
+      G82.action({ type: 'pick', slot: 0 });
+      var okD82 = await until(function () { return G82.state.phase === 'DECIDE'; }, 6000);
+      if (!okD82) break;
+      var flagBefore82 = !!G82.state.challengedThisRound;
+      var cA82 = G82.state.coins, sA82 = G82.state.suspicion, pA82 = G82.state.patience;
+      var ret1_82 = G82.action({ type: 'decide', choice: 'challenge' });
+      var lc82 = G82.state.lastChallenge || {};
+      var cB82 = G82.state.coins, sB82 = G82.state.suspicion, pB82 = G82.state.patience;
+      var flagAfter1_82 = !!G82.state.challengedThisRound;
+      var ret2_82 = G82.action({ type: 'decide', choice: 'challenge' });
+      rounds82.push({
+        round: rr82, flagBefore: flagBefore82, ret1: ret1_82, ok: !!lc82.ok, truthful: lc82.truthful,
+        dCoins1: cB82 - cA82, dSus1: sB82 - sA82, dPat1: pB82 - pA82,
+        ret2: ret2_82, flagAfter1: flagAfter1_82,
+        dCoins2: G82.state.coins - cB82, dSus2: G82.state.suspicion - sB82
+      });
+      if (G82.state.phase === 'DECIDE') {
+        G82.action({ type: 'decide', choice: 'stick' });
+        await until(function () { return G82.state.phase !== 'DECIDE'; }, 6000);
+      }
+      if (rr82 < 3) {
+        if (G82.state.phase === 'SETTLE_ROUND') G82.action({ type: 'settle', choice: 'continue' });
+        var moved82 = await until(function () { return G82.state.round === rr82 + 1 && G82.state.phase === 'PICK'; }, 6000);
+        if (!moved82) break;
+      }
+    }
+    claimRound = rounds82.filter(function (r) { return r.ret1 === true; })[0] || null;
+    for (var q82 = 0; q82 < rounds82.length; q82++) {
+      if (rounds82[q82] === claimRound && q82 + 1 < rounds82.length) nextOfClaim = rounds82[q82 + 1];
+    }
+    deltaOk82 = claimRound ? (claimRound.ok
+      ? (claimRound.dCoins1 === 20 && claimRound.dSus1 === -1)
+      : (claimRound.dCoins1 === -20 && claimRound.dPat1 === -1)) : false;
+  } catch (e82) { err82 = String((e82 && e82.message) || e82); }
 
-  /* ---------- HINT-NO-SPOILER：风险提示/兜底文案不得剧透哪轮撒谎、哪轮说真话 ---------- */
+  ck.ok('G8.2', !err82 && !!claimRound && claimRound.flagBefore === false && claimRound.flagAfter1 === true &&
+    claimRound.ret2 === false && claimRound.dCoins2 === 0 && claimRound.dSus2 === 0 && deltaOk82 &&
+    (!nextOfClaim || nextOfClaim.flagBefore === false),
+    'CHALLENGE-ONCE：第 ' + (claimRound ? claimRound.round : '?') + ' 轮第 1 次质疑被受理（true' +
+    (claimRound ? '，金币 ' + claimRound.dCoins1 + '、怀疑值 ' + claimRound.dSus1 + '、lastChallenge.ok=' + claimRound.ok : '') +
+    '），同一轮第 2 次质疑 false 且金币/怀疑值零变化；换到下一轮后 challengedThisRound 已重置（' +
+    (nextOfClaim ? '第 ' + nextOfClaim.round + ' 轮起手 flag=' + nextOfClaim.flagBefore : '本轮即最后一轮') + '）',
+    (err82 ? '扫描异常：' + err82 + '；' : '') + '逐轮=' + jsonOf(rounds82));
+
+  /* ---------- HINT-NO-SPOILER：赛前可见文案（roundHints / 横幅）不得剧透哪轮撒谎、哪轮说真话 ----------
+     Lead 裁定（m02846 §C）：js/game.js:649「这句是真话。/这句是假的。」与 :1157 的兜底提示是
+     「质疑旁白后必须给提示」这条用户点名功能的一部分，**付费/主动质疑后的提示文本豁免禁词**；
+     禁词只适用于「赛前可见」的 roundHints / 横幅类文案（以及 difficulty 之外的说明性横幅）。 */
   var SPOIL8 = /撒谎|说真话|真话|不老实|说谎/;
   var spoilerWords = /\b(?:lie|lies|lying|truth|truthful|spoiler)\b/i;
   var cfgPath8 = path.join(L.ROOT, 'data', 'config.json');
@@ -1549,32 +1608,46 @@ async function main() {
     if (Array.isArray(v)) { v.forEach(function (x, i) { collect8(x, p + '[' + i + ']'); }); return; }
     if (v && typeof v === 'object') { Object.keys(v).forEach(function (k) { collect8(v[k], p + '.' + k); }); }
   })(cfgObj8, 'config');
-  var cfgValueSpoil8 = cfgStrings8.filter(function (s2) { return SPOIL8.test(s2.text) || spoilerWords.test(s2.text); })
+  /* 只查「赛前可见」的键：roundHints / 任何键名带 hint|banner|pregame 的字符串（difficulty.desc 属通用规则说明，不在禁词范围） */
+  var PRE_KEYS8 = /(^|\.)(roundHints|hints?|banners?|pregameNotice)(\.|\[|$)/i;
+  var cfgPre8 = cfgStrings8.filter(function (s2) { return PRE_KEYS8.test(s2.p); });
+  var cfgValueSpoil8 = cfgPre8.filter(function (s2) { return SPOIL8.test(s2.text) || spoilerWords.test(s2.text); })
     .map(function (s2) { return s2.p + ' = ' + JSON.stringify(s2.text); });
+  /* 全文件行扫描：命中一律记为证据，但 `"desc"` 行（difficulty 档位通用规则说明）不计入失败 */
   var cfgRawSpoil8 = [];
   cfgRaw8.split(/\r?\n/).forEach(function (line, i) {
-    if (SPOIL8.test(line)) cfgRawSpoil8.push('config.json:' + (i + 1) + ' ' + line.trim());
+    if (!SPOIL8.test(line) && !spoilerWords.test(line)) return;
+    cfgRawSpoil8.push('config.json:' + (i + 1) + ' ' + line.trim());
   });
+  cfgRawSpoil8 = cfgRawSpoil8.filter(function (line) { return !/"desc"\s*:/.test(line); });
+  /* 纯键名行（如 `"lies": {`）不是玩家可见文案，排除掉 */
+  cfgRawSpoil8 = cfgRawSpoil8.filter(function (line) { return !/^\s*(config\.json:\d+\s*)?"[A-Za-z_]+"\s*:\s*\{\s*$/.test(line); });
   var gameSrc8 = L.readText(path.join(L.JS_DIR, 'game.js'));
-  var gameSpoil8 = [], gameLitSpoil8 = [], gameCodeLines8 = 0;
+  var gameSpoil8 = [], gameLitSpoil8 = [], gameCodeLines8 = 0, exemptLines8 = [];
   gameSrc8.split(/\r?\n/).forEach(function (line, i) {
     var t = line.trim();
     if (t.charAt(0) === '*' || t.indexOf('//') === 0 || t.indexOf('/*') === 0) return;  /* 注释不算玩家可见文案 */
     gameCodeLines8++;
-    if (SPOIL8.test(line)) gameSpoil8.push('js/game.js:' + (i + 1) + ' ' + t);
+    var hit = SPOIL8.test(line);
+    var litHit = false;
     var reL8 = /["']([^"']*)["']/g, mL8;
     while ((mL8 = reL8.exec(line)) !== null) {
-      if (spoilerWords.test(mL8[1])) gameLitSpoil8.push('js/game.js:' + (i + 1) + ' ' + mL8[0]);
+      if (spoilerWords.test(mL8[1])) litHit = true;
     }
+    if (!hit && !litHit) return;
+    /* 豁免：质疑后的提示文本（「这句是真话/假的」「旁白这次说的是真话——信不信由你」），见 Lead 裁定 */
+    if (/这句是|信不信由你|claim\.truthful/.test(line)) { exemptLines8.push('js/game.js:' + (i + 1) + ' ' + t); return; }
+    if (hit) gameSpoil8.push('js/game.js:' + (i + 1) + ' ' + t);
+    if (litHit) gameLitSpoil8.push('js/game.js:' + (i + 1) + ' ' + t);
   });
-  ck.ok('G8.3', cfgRawSpoil8.length === 0 && cfgValueSpoil8.length === 0 && gameSpoil8.length === 0 &&
-    gameLitSpoil8.length === 0 && cfgStrings8.length >= 20 && gameCodeLines8 >= 300,
-    'HINT-NO-SPOILER（文件内容断言，不靠人眼）：data/config.json 的 ' + cfgStrings8.length +
-    ' 个字符串值与全部 ' + cfgRaw8.split(/\r?\n/).length + ' 行、js/game.js 的 ' + gameCodeLines8 +
-    ' 行非注释代码，都不含「撒谎/说真话/真话/不老实/说谎」及英文 lie/lies/lying/truth/spoiler 字样' +
-    '（规则说明只允许出现在注释里）',
-    'config行命中=' + jsonOf(cfgRawSpoil8) + ' config值命中=' + jsonOf(cfgValueSpoil8) +
-    ' gamejs行命中=' + jsonOf(gameSpoil8) + ' gamejs字面量命中=' + jsonOf(gameLitSpoil8));
+  ck.ok('G8.3', cfgValueSpoil8.length === 0 && cfgRawSpoil8.length === 0 &&
+    gameSpoil8.length === 0 && gameLitSpoil8.length === 0 && cfgStrings8.length >= 20 && gameCodeLines8 >= 300,
+    'HINT-NO-SPOILER（赛前可见文案）：data/config.json 的 ' + cfgPre8.length + ' 条 roundHints/横幅类文案、' +
+    '以及 js/game.js 的 ' + gameCodeLines8 + ' 行非注释代码，都不含「撒谎/说真话/真话/不老实/说谎」与 ' +
+    'lie/lies/lying/truth/spoiler（质疑后的提示文本按 Lead 裁定 m02846 §C 豁免）',
+    'config赛前文案命中=' + jsonOf(cfgValueSpoil8) + ' config其它行命中（已排除 desc 通用说明）=' + jsonOf(cfgRawSpoil8) +
+    ' gamejs行命中=' + jsonOf(gameSpoil8) + ' gamejs字面量命中=' + jsonOf(gameLitSpoil8) +
+    ' 豁免行=' + jsonOf(exemptLines8));
 
   var hints8 = cfgObj8.roundHints || {};
   var hintKeys8 = Object.keys(hints8);
