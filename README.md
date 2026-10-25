@@ -2,7 +2,7 @@
 
 创意互动与娱乐赛道 · 黑客松 Demo。零构建纯静态网页：**双击 `index.html` 即可运行**（也支持任意静态服务器），断网可用，无后端、无登录、无任何外部接口。
 
-游戏规则一句话：三扇门后是大奖、小奖与空门，主持人会替你打开一扇门（普通模式优先开空门，演示剧本会故意开出炸弹/陷阱），而**旁白说的每一句话都可能是谎**。你可以坚持、换门、质疑旁白、加倍下注，或者见好就收；赚到的金币还能在**商店**里买道具（换门券、闭嘴卡、双倍金币、保险丝、神秘盒、续命符）。第三轮追加了**线索制质疑**（旁白会给出可验证的「N 号门里是…」）、连击加成、怀疑值恢复与 **8 种结局**。
+游戏规则一句话：三扇门后是大奖、小奖与空门，主持人会替你打开一扇门（**普通模式只开空门**，演示剧本会故意开出炸弹/陷阱来教学），而**旁白说的每一句话都可能是谎**。你可以坚持、换门、质疑旁白、加倍下注，或者见好就收；赚到的金币还能在**商店**里买道具（换门券、闭嘴卡、双倍金币、保险丝、神秘盒、续命符）。第三轮追加了**线索制质疑**（旁白会给出可验证的「N 号门里是…」）、连击加成、怀疑值恢复与 **8 种结局**；第六轮（2026-10-25 下午）追加**首页「命运之门」**（剧情开场 + 钱包余额 + 三档难度 + 6 项升级）、**金币钱包跨局保存**、**质疑必有提示**、**主持人只开空门**、**死亡剧情**与**两段式换门**。
 
 ## 快速开始
 
@@ -43,7 +43,11 @@ docs/                 协作说明、回滚说明、现场自测清单、商店�
 | 点门 | 选一扇门，主持人会替你打开一扇门（**绝不会开你选的那扇，也绝不会开大奖门**） |
 | 长按门 | 窥视（每轮一次，只给模糊提示） |
 | 坚持本门 | 决定最终翻开当前这扇门 |
-| 换门 | 翻到另一扇没被打开的门：**有换门券就消耗券，否则扣 15 金币**；两者都没有则留在决策阶段 |
+| 换门 | **两段式**（第六轮改）：先进入选门弹层，点要换的那扇门（或按 `1`–`6`）才真正换；`Esc`/「算了」可退且**不扣费**。有换门券优先消耗券，否则扣 15 金币 |
+| 首页（命运之门） | 打开页面先进首页：标题 + 三段剧情 + **钱包余额** + 难度选择 + 6 项升级；点「开始游戏」进牌局。金币是跨局保存的（`three_doors_wallet_v1`） |
+| 难度 | 三档：`普通 100/3/2` · `困难 80/2/1` · `地狱 60/1/0`（金币/耐心/怀疑值），撒谎率 0.35 / 0.5 / 0.65，通关奖励 ×1 / ×1.5 / ×2；选择会记住，下次自动选中 |
+| 升级商店 | 首页用**钱包金币**买永久升级：起始金币、开局怀疑值、免费窥视、商店折扣、死亡保险、起始耐心（`data/upgrades.json`，价格与效果都在数据层） |
+| 死亡剧情 | 耐心被扣到 0 不是白屏：结算层给「**你死了**」+ 一段死亡旁白，按钮为「再来一局」/「升级商店」 |
 | 质疑旁白（验证线索） | 消耗 1 点怀疑值，**每轮只能质疑一次**；旁白有时会给出可验证的**线索**（「3 号门里是小奖」「大奖在 1 号门」…），质疑成功即拆穿谎言；连续成功有**连击**加成（+20 → +30 → +40，封顶 +40） |
 | 加倍下注 | 本轮收益与负面效果 ×2，不可叠加 |
 | 商店（右上角） | **决策阶段 / 本轮结算页**可开，金币买道具；买了自动进背包 |
@@ -135,18 +139,36 @@ docs/                 协作说明、回滚说明、现场自测清单、商店�
 
 同轮：`handoff/integrate.js`（Lead 的整合工具）校验交付包结构、写作用域与换行/BOM，演练通过后才写入真仓库。
 
+## 第六轮：首页 / 钱包 / 规则修正（契约 v6，2026-10-25 下午）
+
+用户点名 8 条，四路并行（Lead 立契约 + `index.html` + `js/state.js`，engine-dev 写 `js/game.js`，content-data 写 `data/**`，ui-render 写 `js/ui.js` + `style.css`，qa-verify 写 `tests/**`），Lead 整合收口。
+
+| # | 内容 | 涉及文件 | 证据 |
+| --- | --- | --- | --- |
+| ① 质疑必有提示 | 质疑成功/失败都会写 `state.lastHint.text`，DECIDE 阶段以 `#hint-claim` 浮层 + 弹层内 `.hint-claim.is-inline` 展示「旁白说 N 号门是…——这句是真话/假的」；无 claim 时引擎兜底造一条 | `js/game.js`、`js/ui.js` | `tests/features.js`、`tests/ux.js` |
+| ② 金币存钱包 | 结算/开奖收益进 `three_doors_wallet_v1`（`state.spentCoins` 记账），跨局保留；「清空存档」会一并清零 | `js/state.js`、`js/game.js` | `tests/home.js` V0/V2/V3 |
+| ③ 首页 + 升级 + 难度 | 新首页（标题「命运之门」+ 3 段剧情 + 钱包余额 + 3 档难度 + 6 项升级：起始金币/开局怀疑值/免费窥视/商店折扣/死亡保险/起始耐心）；难度 `normal 100/3/2 · hard 80/2/1 · hell 60/1/0`，撒谎率 0.35/0.5/0.65，奖励 ×1/×1.5/×2 | `index.html`、`data/config.json`、`data/upgrades.json`、`js/game.js`、`js/ui.js` | `tests/home.js` 62 项 |
+| ④ 主持人只开空门 | `hostPick` 只从空门里挑（≠ 玩家所选、≠ 大奖门）；随机发牌保证「≤1 大奖 + ≥2 空门」，剧本轮由 `tools/build-data.js` 构建期校验 `hostOpensSlot` 指向空门且 ≠ autoDemo 所选门；剧本与规则冲突时退化为真实 `hostPick` 并置 `hostScriptFallback` | `js/game.js`、`data/seed_demo.json`、`tools/build-data.js` | `tests/doors.js` G9.x、`tests/sim.js` G8.1b |
+| ⑤ 改名「命运之门」 | 标题/品牌/首页文案更换（页内 `.brand-name`、`#home-title`、`<title>`） | `index.html`、`js/ui.js`、`data/config.json` | `tests/home.js` V1.x |
+| ⑥ 决策高亮 | DECIDE 可用按钮加 `.is-primary` 金边引导，禁用态互斥；`#stage-hint` 复述五个选项 | `js/ui.js`、`style.css` | `tests/home.js` V5.8 |
+| ⑦ 死亡剧情 | 耐心归零 → 结算层标题「你死了」+ 死亡旁白 + `upgrade_shop`/`restart` 入口（不再是无按钮死屏） | `js/game.js`、`js/ui.js` | `tests/home.js` V5.9/V5.10、`tests/sim.js` G3.x |
+| ⑧ 换门两段式 | 换门先进选门弹层（`beginSwitch` → `.switch-card[data-slot]` → `chooseSwitch(slot)`），`cancelSwitch` 可退且不扣费；无券扣 15 金币、有券优先消耗券；`Esc` 取消 | `js/game.js`、`js/ui.js` | `tests/shop.js` SH4.x、`tests/ux.js` X4.x |
+
+同轮：难度偏好落盘（`three_doors_prefs_v1.difficulty`，修掉「`setDifficulty` 被 prefs 白名单静默丢弃」的老 bug）；演示剧本升级为**变门数**（R1 3 门小奖首胜 / R2 4 门质疑反杀 / R3 4 门收手，三轮都 ≥2 空门）。
+
 ## 本地校验
 
 ```powershell
 node tools/build-data.js          # 重新生成 js/data.js（应与提交内容一致）
 node tools/build-data.js --check  # 只校验 data/*.json 与 js/data.js 是否同步
 node tests/sim.js                 # 无头逻辑 + 清单验收项（175 项）
-node tests/shop.js                # 商店 / 背包 / 经济 / 换门代价（75 项）
+node tests/shop.js                # 商店 / 背包 / 经济 / 换门代价（80 项）
 node tests/features.js            # 线索 / 连击 / 怀疑值 / 结局 / 提词器 / 图鉴可达（58 项）
+node tests/home.js                # 首页 / 钱包 / 难度 / 升级 / 死亡剧情 / 换门两段式（62 项）
 node tests/ux.js                  # 体验增强：成就 / 统计 / 种子重放 / 键盘 / 人格 / 引导 / 竖屏（73 项）
 node tests/doors.js               # 多门（3–6 扇）：?doors / 主持人规则 / 换门 / 分布（26 项）
 node tests/dom-smoke.js           # Node DOM 垫片：页面结构、商店 DOM 契约、六档视口、WCAG 对比度（98 项）
-node tests/run-all.js             # 全量自测，8 个套件：514 PASS / 0 FAIL / 9 SKIP
+node tests/run-all.js             # 全量自测，9 项（8 套件 + 产物一致性）：581 PASS / 0 FAIL / 9 SKIP
 node tests/mutation-proof.js      # 变异自证：31/31（故意改坏数据/逻辑，确认自测真的会红）
 ```
 
@@ -221,12 +243,19 @@ node tests/mutation-proof.js      # 变异自证：31/31（故意改坏数据/�
 18. **首帧渲染与真机目检**：G7 的视觉升级（幕布 / 聚光灯 / 浮雕门卡 / 彩带）全部是静态 CSS + 内联 SVG + 运行时合成，没有音频或图片文件；与第 3 条相同，沙箱无法启动浏览器，**真机观感需要人工按 [现场自测清单](docs/现场自测清单.md) 第 13 节看一遍**。
 19. **Esc 不关必选流程弹层**：本轮结算（`round`）/ 结算页（`cashout`）/ 结束页（`gameover`）三种弹层必须点按钮才能离开；按 Esc 会被忽略（契约 §4.2 注）。原因：这些弹层一旦被关掉、而相位仍停在 `SETTLE_ROUND / CASHOUT / GAME_OVER`，玩家会卡在「无弹层可操作」的死状态。信息弹层（规则 / 设置 / 图鉴 / 商店）一律可用 Esc 关闭；`Game.openHelp/openSettings` 也会拒绝覆盖这些必选弹层（只弹 toast）。
 20. **新手引导是 5 步，不是契约初稿的 3 步**：`Game.tutorialSteps()` 返回 5 步（`tut_door/tut_narrator/tut_decide/tut_challenge/tut_cashout`），每步带 `id/title/text/anchor`，anchor 覆盖 `doors/decide/cashout`；契约 §2.3 已按实测回写。步数多不是缺陷，是「把商店/收手也说清楚」的取舍。
-21. **测试基线数字**：`node tests/run-all.js` = 8 套件 **514 PASS / 0 FAIL / 9 SKIP**（`build-data --check` 独立一项、sim 175、shop 75、features 58、ux 73、doors 26、dom-smoke 98、headless 9 PASS + 9 SKIP）；`STRICT=1` 会把 9 条 SKIP 判失败（全部是 headless-check 的 Edge 启动项）。`tests/ux.js` 的「只提示一次」断言依赖 `tests/dom-shim.js` 的 localStorage 桩记录 `_writes`（本轮给 `makeStorage()` 补上）。
+21. **测试基线数字**：`node tests/run-all.js` = **9 项（8 套件 + `build-data --check`）581 PASS / 0 FAIL / 9 SKIP**，`exit=0`；明细：sim 175、shop 80、features 58、home 62、ux 73、doors 26、dom-smoke 98、headless 9 PASS + 9 SKIP。`STRICT=1` 会把 9 条 SKIP 判失败（全部是 headless-check 的 Edge 启动项，沙箱必然）。变异自证 `node tests/mutation-proof.js` = **31/31**。（第四轮时的旧数字 8 套件 514/0/9 已被本轮覆盖。）
 22. **`?doors=N` 非法值回落 3**：给了 `?doors=2/7/abc` 时按 3 扇处理（契约 §2.1），不按权重抽——固定门数是给演示者的「可预期礼物」，给错就还标准 3 门。
 23. **12 种牌面里只有 `big_prize` 是「唯一大奖」**：`jackpot` 虽是 `kind: 'prize'` 的高收益牌（+150），但 4–6 门的「恰好 1 扇大奖门」按 id `big_prize` 判定，所以多门不会出现两个大奖。
 24. **A 工作流的浏览器证据来自它的机器**：A 包的验收证据里有 20 条无头 Edge 端到端 PASS；本仓库沙箱仍无法启动浏览器（见第 3 条），真机渲染仍需人工按 [现场自测清单](docs/现场自测清单.md) 第 14 节检查。
 25. **整合后多门 UI 的 SKIP 已清空**：`tests/doors.js` 原有 2 条 UI SKIP（`#doors-count` 文本 / `data-cols`）在 A 交付后改为「静态 DOM 契约核对」，现全部 PASS；`run-all` 剩余 9 条 SKIP 仍是无头 Edge。
 26. **旁白改为「按阅读速度播放」（2026-10-25，按用户实测反馈修正）**：旧实现在 `js/ui.js` 里把整句总时长压到约 1 秒（`interval = clamp(1000/字数)`），字数越多打得越快，28 字一句约 1.3 秒一闪而过 → 玩家看不清、漏掉关键信息。现在改为**按字数定速**（慢 6 / 标准 9 / 快 13 字每秒，默认标准）+ 句末停留 1.2 秒，并新增 **设置 → 旁白速度** 三档与 **旁白记录**（本局每一句旁白留档，随时回看）。因此阶段 6 的旧 P0「单句 ≤2 秒」按新需求修订为「可读优先、可调速度、可回看」；`tests/dom-smoke.js` 的 U3.1 / U3.5 断言同步改为「自动播完」与「长句 3–12 秒可读区间」。
+
+27. **主持人被收窄成「只开空门」的代价（v6 需求④）**：为保证 `hostPick` 永远开空门，随机发牌改为「**≤1 扇大奖门 + ≥2 扇空门**」，所以 3 门局的第三扇必然是空门；炸弹 / 陷阱只在 **4 门及以上**出现（`config.pool`）。演示剧本仍可出现炸弹/陷阱（剧本是写死的教学流程），但 `tools/build-data.js` 会在构建期校验 `hostOpensSlot` 指向空门、且 ≠ `autoDemo` 会选的那扇门——不满足就构建失败，而不是让运行时出洋相。剧本与规则冲突时引擎退化为真实 `hostPick` 并置 `state.flags.hostScriptFallback`（`tests/doors.js`/`tests/sim.js` 都在盯这个标记）。
+28. **换门语义变了（v6 需求⑧）**：`decide('switch')` 不再直接换门，而是进入**选门弹层**（`beginSwitch`），要点 `.switch-card[data-slot]`（或按键 `1..6`）才真正换；`cancelSwitch`（Esc）可退且**不扣费**。费用：有换门券优先消耗券，否则扣 15 金币（`economy.switchCost`）；扣费发生在 `chooseSwitch` 成功那一刻，取消不计。旧断言「`decide('switch')` 立即扣费」已按契约更新。
+29. **死亡页的按钮是「再来一局 + 升级商店」**：耐心归零后标题按 v6 §2.5 改为「**你死了**」+ 死亡旁白，按钮集合 = `restart` + `upgrade_shop`（`tests/sim.js` G3.3/G6.12 与 `tests/home.js` V5.9/V5.10 都在断言），不再是旧版「只有再来一局」。
+30. **`difficulty` 偏好曾静默失效（本轮修掉的真 bug）**：`js/state.js` 的 `loadPrefs/savePrefs` 白名单漏了 `difficulty` 键，导致 `Game.setDifficulty('hard')` 写进去又被丢掉、重开还是 `normal`。现已把 `difficulty` 纳入白名单并校验取值，`tests/home.js` V4.9/V4.9b 守着三档初值（100/3/2 · 80/2/1 · 60/1/0）。
+31. **G8.3 禁词扫描收窄为「只扫字符串值」**：质疑后的提示文本（`旁白说 N 号门是…`）在语义上是允许出现「炸弹/陷阱」的（那正是它给出的线索），所以扫描脚本跳过 JSON 键名与通用 `desc` 字段，只对字符串**值**做禁词检查，并豁免 `js/game.js:649/1157` 两处。放宽的是扫描范围，不是把断言删掉——`tests/features.js` 的 G8.1b 仍会因剧本校验被短路而变红（变异自证②就走这条路）。
+32. **金币「钱包」与「局内资源」是两本账**：局内 `state.coins` 归零只影响本局下注能力；跨局保留的钱包余额（`three_doors_wallet_v1`）只在点「收手」时结算入账。所以「上一局破产」不会让首页的升级进度倒退；「清空存档」会把钱包、图鉴、成就、统计、偏好一起清零（`CodexStore.clearAll()`，5 个键）。
 
 ## 开发约定
 
