@@ -561,6 +561,10 @@
         return;
       }
       s.narratorLines = narrator.pickRoundLines(s, Game.script()) || [];
+      /* 旁白记录（可回看）：本局每一句都留档 —— 玩家错过一句也能在「旁白记录」里补看。 */
+      s.narratorLog = (s.narratorLog || []).concat(s.narratorLines.map(function (ln) {
+        return { round: s.round, text: (ln && ln.text) || ln || '' };
+      }));
       Game.setState(STATES.NARRATOR);
 
       var gen = Game._generation;
@@ -1172,6 +1176,10 @@
             if (pk === 'sound') Game.savePref('sound', pp.sound === false);
             else if (pk === 'bgm') Game.savePref('bgm', pp.bgm === false);
             else if (pk === 'speed') Game.savePref('animationSpeed', pp.animationSpeed === 'fast' ? 'full' : 'fast');
+            else if (pk === 'narrator') {
+              /* 慢 → 标准 → 快 → 慢 循环。 */
+              Game.savePref('narrator', pp.narrator === 'slow' ? 'normal' : pp.narrator === 'fast' ? 'slow' : 'fast');
+            } else if (pk === 'log') { Game.openNarratorLog(); return true; }
             return Game.openSettings();
           }
           if (typeof choice === 'string' && choice.indexOf('buy:') === 0) {
@@ -1695,7 +1703,8 @@
         '<p><b>三扇门</b>：每轮一扇大奖、一扇小奖、一扇空门。选一扇后主持人会开一扇空门，然后你决策。</p>' +
         '<p><b>五个决策</b>：坚持（免费）· 换门（现金币）· 质疑（花 1 怀疑值赌旁白在骗你）· 加倍（本轮收益与代价 ×2）· 收手（落袋为安）。</p>' +
         '<p><b>快捷键</b>：1/2/3 选门 · Q 质疑 · D 加倍 · S 换门 · C 收手 · 空格 坚持 · M 静音 · ? 规则 · Esc 关闭弹层。</p>' +
-        '<p class="muted">金币可去商店买道具；怀疑值每轮最多用一次；耐心归零就结束。</p>';
+        '<p class="muted">金币可去商店买道具；怀疑值每轮最多用一次；耐心归零就结束。' +
+        '看不清旁白？设置里可调「旁白速度」，或点「旁白记录」回看本局每一句旁白。</p>';
       if (ui.openModal) {
         Game._safe(function () {
           ui.openModal({ kind: 'help', title: '怎么玩', body: body, actions: [{ label: '知道了', choice: 'close', primary: true }] });
@@ -1717,14 +1726,18 @@
       }).join('');
       var body =
         '<p><b>旁白人格</b></p><ul class="persona-list">' + personas + '</ul>' +
+        '<p><b>旁白速度</b>：' + (prefs.narrator === 'slow' ? '慢' : prefs.narrator === 'fast' ? '快' : '标准') +
+        '（慢 6 / 标准 9 / 快 13 字每秒）</p>' +
         '<p><b>声音</b>：' + (prefs.sound !== false ? '开' : '关') + ' · <b>BGM</b>：' + (prefs.bgm !== false ? '开' : '关') +
         ' · <b>动画速度</b>：' + (prefs.animationSpeed === 'fast' ? '快' : prefs.animationSpeed === 'off' ? '关' : '正常') + '</p>' +
-        '<p class="muted">种子：' + Game.seedTag() + '</p>';
+        '<p class="muted">种子：' + Game.seedTag() + ' · 错过旁白可点「旁白记录」回看</p>';
       if (ui.openModal) {
         Game._safe(function () {
           ui.openModal({
             kind: 'settings', title: '设置', body: body,
             actions: [
+              { label: '旁白速度：' + (prefs.narrator === 'slow' ? '慢' : prefs.narrator === 'fast' ? '快' : '标准'), choice: 'pref:narrator' },
+              { label: '旁白记录', choice: 'pref:log' },
               { label: '有声音效：' + (prefs.sound !== false ? '关' : '开'), choice: 'pref:sound' },
               { label: 'BGM：' + (prefs.bgm !== false ? '关' : '开'), choice: 'pref:bgm' },
               { label: '动画：' + (prefs.animationSpeed === 'fast' ? '正常' : '快'), choice: 'pref:speed' },
@@ -1735,6 +1748,25 @@
         });
       }
       return prefs;
+    },
+
+    /** 旁白记录弹层：本局每一句旁白都留档，错过也能慢慢回看（信息不再一闪而过）。 */
+    openNarratorLog: function () {
+      var s = Game.state;
+      var log = (s && s.narratorLog) || [];
+      var rows = log.length ? log.map(function (r2) {
+        return '<li><span class="muted">第 ' + r2.round + ' 轮</span> ' + r2.text + '</li>';
+      }).join('') : '<li class="muted">本局还没有旁白。</li>';
+      if (Game._ui().openModal) {
+        Game._safe(function () {
+          Game._ui().openModal({
+            kind: 'info', title: '旁白记录（本局）',
+            body: '<ul class="narrator-log">' + rows + '</ul>',
+            actions: [{ label: '关闭', choice: 'close', primary: true }]
+          });
+        });
+      }
+      return log;
     },
 
     /** 清空全部本地数据（图鉴 / 最佳 / 统计 / 成就 / 偏好）。 */

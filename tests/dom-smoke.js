@@ -159,8 +159,8 @@ ck.ok('U2.8', db.textContent.trim() === '加倍下注' && db.disabled === false,
 ck.section('阶段 1/6 P0｜旁白逐字播放、跳过、超时截断、动画瞬时');
 
 var pN = UI.playNarratorLine({ id: 'u-l1', text: '这是一句用来测试逐字播放的旁白。' }, 0);
-var rN = await Promise.race([pN.then(function () { return 'resolved'; }), sleep(2500).then(function () { return 'timeout'; })]);
-ck.ok('U3.1', rN === 'resolved', '旁白自动播完并 resolve（不需要外部跳过）', rN);
+var rN = await Promise.race([pN.then(function () { return 'resolved'; }), sleep(6000).then(function () { return 'timeout'; })]);
+ck.ok('U3.1', rN === 'resolved', '旁白按阅读速度自动播完并 resolve（不需要外部跳过）', rN);
 ck.ok('U3.2', byId('narrator-skip').hidden === true, '播完后「跳过」按钮隐藏');
 
 var pN2 = UI.playNarratorLine({ id: 'u-l2', text: '再播一句长的旁白，然后在播放途中调用 UI.skip()。' }, 1);
@@ -175,7 +175,9 @@ var tLong = Date.now();
 await UI.playNarratorLine({ id: 'u-l3', text: '旁'.repeat(200) }, 2);
 var dtLong = Date.now() - tLong;
 var shown = byId('narrator-text').textContent;
-ck.ok('U3.5', dtLong < 2000, '单句 200 字旁白 ≤2 秒读完（阶段 6 P0 实测 ' + dtLong + 'ms）');
+/* 2026-10-25 起：旁白按阅读速度播放（默认 9 字/秒 + 句末停留 1.2s），不再「一闪而过」。
+   200 字会被截断为 61 字 → 预期约 8s；这里只保证「够慢可读、不失控、可跳过」。 */
+ck.ok('U3.5', dtLong >= 3000 && dtLong <= 12000, '单句长旁白按阅读速度播放（实测 ' + dtLong + 'ms，3–12s 可读区间）');
 ck.ok('U3.6', shown.length <= 62 && /…$/.test(shown), '超长旁白自动截断为 ' + shown.length + ' 字并以 … 结尾',
   shown.slice(-8));
 

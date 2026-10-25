@@ -864,8 +864,19 @@
       bgm: raw.bgm === undefined ? !f.muted : raw.bgm !== false,
       sound: on === undefined ? !f.muted : on !== false,
       animSpeed: speed,
+      /* 旁白速度（慢 6 / 标准 9 / 快 13 字每秒）：默认标准。 */
+      narrator: (raw.narrator === 'slow' || raw.narrator === 'fast') ? raw.narrator : 'normal',
       onboarded: raw.onboarded === undefined ? !!f.onboarded : raw.onboarded === true
     };
+  }
+
+  /* 阅读速度（字/秒）：慢 6 / 标准 9 / 快 13。
+     2026-10-25 修：旧实现把「整句总时长」压缩到约 1s（interval = 1000/字数 再 clamp），
+     字数越多打得越快，28 字一句约 1.3s 一闪而过 → 玩家看不清旁白、漏掉关键信息。 */
+  var NARRATOR_CPS = { slow: 6, normal: 9, fast: 13 };
+  function narratorCps() {
+    var v = (prefCache && prefCache.narrator) || 'normal';
+    return NARRATOR_CPS[v] || NARRATOR_CPS.normal;
   }
 
   /** 动画速度 → 时长系数（1.5× 档 ⇒ 时长 ×0.667）。 */
@@ -2390,9 +2401,11 @@
     if (!el) { a.finish(); return a.promise; }
 
     var len = full.length;
-    var interval = len ? Math.max(10, Math.round(Math.max(14, Math.min(38, Math.round(1000 / len))) * speedScale())) : 0;
+    /* 按阅读速度定速：默认 9 字/秒（慢 6 / 快 13），句末至少停留 1.2s，
+       让 28 字的长句有约 4.3s 可读，而不是旧实现的 1.3s。 */
+    var interval = len ? Math.max(18, Math.round(1000 / (narratorCps() * speedScale()))) : 0;
     var typeMs = len * interval;
-    var hold = scaled(320);
+    var hold = scaled(1200);
 
     (function type(i) {
       if (a.finished) return;
