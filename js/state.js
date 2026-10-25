@@ -54,6 +54,7 @@
     phase: 'IDLE',                   // STATES 之一：状态机当前状态
     rng: { seed: 20261024, cursor: 0 },
     round: 1,
+    doorCount: 3,                    // 契约 v5：本轮门数（3–6）
     coins: 100,
     suspicion: 2,
     patience: 3,
@@ -105,6 +106,7 @@
       phase: STATES.IDLE,
       rng: { seed: (opts.seed == null ? DEMO_SEED : opts.seed) >>> 0, cursor: 0 },
       round: 1,
+      doorCount: 3,
       coins: res.coins,
       suspicion: res.suspicion,
       patience: res.patience,
@@ -145,7 +147,8 @@
       switchStreak: 0,        // 连续换门次数（彩蛋用）
       emptyStreak: 0,         // 连续开空门次数（彩蛋用）
       doublesUsed: 0,         // 本局加倍次数
-      roundResult: null,      // 本轮得失：{ itemId, coins, suspicion, patience, challenged }
+      roundResult: null,      // 本轮得失：{ itemId, coins, suspicion, patience, challenged, delta }
+      roundDelta: null,       // 开奖实际入账增量（含加倍、道具与资源上下限）
       lastChallenge: null,    // 最近一次质疑结果（文案 + 判定）
       joinedAt: 0,            // 开局时间戳（结算页 / 计时用）
       flags: {

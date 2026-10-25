@@ -15,6 +15,7 @@
       <span class="brand-sub">别信旁白</span>
     </div>
     <div id="round-chip" class="chip">第 1 轮</div>
+    <div id="doors-count" class="chip chip-quiet" title="本轮门数">3 扇门</div>
     <div id="mode-chip" class="chip chip-quiet">演示模式</div>
     <nav id="controls">
       <button type="button" id="btn-reset" class="ctrl" title="重置回演示起点">重置</button>
@@ -27,11 +28,11 @@
     </nav>
   </header>
 
-  <!-- 舞台：三扇门 + 轮次横幅 -->
+  <!-- 舞台：3–6 扇门 + 轮次横幅（门数由 js/game.js 的 doorCount 决定，js/ui.js 渲染） -->
   <main id="stage">
     <div id="round-banner" class="banner" aria-live="polite"></div>
-    <div id="doors" class="doors" role="group" aria-label="三扇门">
-      <!-- 三个 .door 由 js/ui.js 渲染 -->
+    <div id="doors" class="doors" role="group" aria-label="本轮的几扇门" data-cols="3">
+      <!-- .door 由 js/ui.js 渲染 -->
     </div>
     <div id="stage-hint" class="hint"></div>
   </main>

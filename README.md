@@ -124,7 +124,8 @@ node tests/shop.js                # 商店 / 背包 / 经济 / 换门代价（75
 node tests/features.js            # 线索 / 连击 / 怀疑值 / 结局 / 提词器 / 图鉴可达（58 项）
 node tests/ux.js                  # 体验增强：成就 / 统计 / 种子重放 / 键盘 / 人格 / 引导 / 竖屏（73 项）
 node tests/dom-smoke.js           # Node DOM 垫片：页面结构、商店 DOM 契约、六档视口、WCAG 对比度（98 项）
-node tests/run-all.js             # 全量自测，7 个套件：488 PASS / 0 FAIL / 9 SKIP
+node tests/regressions.js         # 本轮六项缺陷回归：57 PASS / 0 FAIL / 0 SKIP
+node tests/run-all.js             # 全量自测，9 个套件：571 PASS / 0 FAIL / 9 SKIP
 node tests/mutation-proof.js      # 变异自证：25/25（故意改坏数据/逻辑，确认自测真的会红）
 ```
 
@@ -199,7 +200,7 @@ node tests/mutation-proof.js      # 变异自证：25/25（故意改坏数据/�
 18. **首帧渲染与真机目检**：G7 的视觉升级（幕布 / 聚光灯 / 浮雕门卡 / 彩带）全部是静态 CSS + 内联 SVG + 运行时合成，没有音频或图片文件；与第 3 条相同，沙箱无法启动浏览器，**真机观感需要人工按 [现场自测清单](docs/现场自测清单.md) 第 13 节看一遍**。
 19. **Esc 不关必选流程弹层**：本轮结算（`round`）/ 结算页（`cashout`）/ 结束页（`gameover`）三种弹层必须点按钮才能离开；按 Esc 会被忽略（契约 §4.2 注）。原因：这些弹层一旦被关掉、而相位仍停在 `SETTLE_ROUND / CASHOUT / GAME_OVER`，玩家会卡在「无弹层可操作」的死状态。信息弹层（规则 / 设置 / 图鉴 / 商店）一律可用 Esc 关闭；`Game.openHelp/openSettings` 也会拒绝覆盖这些必选弹层（只弹 toast）。
 20. **新手引导是 5 步，不是契约初稿的 3 步**：`Game.tutorialSteps()` 返回 5 步（`tut_door/tut_narrator/tut_decide/tut_challenge/tut_cashout`），每步带 `id/title/text/anchor`，anchor 覆盖 `doors/decide/cashout`；契约 §2.3 已按实测回写。步数多不是缺陷，是「把商店/收手也说清楚」的取舍。
-21. **测试基线数字**：`node tests/run-all.js` = 7 套件 **488 PASS / 0 FAIL / 9 SKIP**（`build-data --check` 独立一项、sim 175、shop 75、features 58、ux 73、dom-smoke 98、headless 9 PASS + 9 SKIP）；`STRICT=1` 会把 9 条 SKIP 判失败（全部是 headless-check 的 Edge 启动项）。`tests/ux.js` 的「只提示一次」断言依赖 `tests/dom-shim.js` 的 localStorage 桩记录 `_writes`（本轮给 `makeStorage()` 补上）。
+21. **测试基线数字**：`node tests/run-all.js` = 9 套件 **571 PASS / 0 FAIL / 9 SKIP**（`build-data --check` 独立一项、sim 175、shop 75、features 58、ux 73、doors 26、regressions 57、dom-smoke 98、headless 9 PASS + 9 SKIP）；`STRICT=1` 会把 9 条 SKIP 判失败（全部是真实浏览器未覆盖项）。`tests/ux.js` 的「只提示一次」断言依赖 `tests/dom-shim.js` 的 localStorage 桩记录 `_writes`。
 
 ## 开发约定
 
@@ -222,3 +223,10 @@ node tests/mutation-proof.js      # 变异自证：25/25（故意改坏数据/�
 ## 免责声明
 
 游戏内金币纯属娱乐，非真实货币，不涉及任何充值、提现或赌博表达。
+
+
+## v5 多门测试（2026-10-25，工作流 C）
+
+- `tests/doors.js`（G9 组）现为 **26 PASS / 0 FAIL / 0 SKIP**，门数徽标、实际门卡与布局均在真实页面脚本的 DOM 仿真中检查。布局按 v5 A2：3 门单行三列、4 门两列两行、5–6 门三列两行。
+- C1 参数化：`tests/sim.js`/`shop.js`/`features.js`/`ux.js` 普通模式初始化全部显式 `doors: 3` 夹具（多门由 `?doors=N` 夹具覆盖；`config.doorCount` 交付后 G9.17/G9.18 自动复跑分布断言）。
+- C4 变异：`tests/mutation-proof.js` 增到 **29 条**，新增「门数上限 6→4」「演示剧本门数优先失效」两处变异（doors.js 必红）。

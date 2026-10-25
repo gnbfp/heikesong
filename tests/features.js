@@ -113,7 +113,7 @@ function mkGame(mode, seed, over) {
     now: function () { return FIXED_NOW; }
   };
   if (over) for (var k in over) deps[k] = over[k];
-  G.Game.init({ mode: mode || 'demo', seed: seed == null ? SEED : seed, deps: deps });
+  G.Game.init({ mode: mode || 'demo', seed: seed == null ? SEED : seed, doors: (mode === 'normal' ? 3 : undefined), deps: deps });
   return { Game: G.Game, ui: ui, rec: ui.rec, deps: deps };
 }
 

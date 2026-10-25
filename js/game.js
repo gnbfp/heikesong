@@ -58,6 +58,22 @@
   /** 契约 v4 §6：?seed=xxx 指定的重放种子（本进程内记忆）。 */
   var seedPref = null;
 
+  /** 契约 v5：?doors=N 强制本轮门数（仅普通模式；3–6，越界忽略）。 */
+  var forceDoorCount = null;
+
+  /** 读 URL 里的 ?doors=N（deps.location 可注入，测试用）。 */
+  function doorsFromUrl(opts, deps) {
+    if (opts && opts.doors != null) {
+      var n0 = parseInt(opts.doors, 10);
+      return (n0 >= 3 && n0 <= 6) ? n0 : null;
+    }
+    var loc = (deps && deps.location) || root.location || {};
+    var m = /(?:[?&])doors=(\d+)(?:&|$)/.exec(String(loc.search || ''));
+    if (!m) return null;
+    var n = parseInt(m[1], 10);
+    return (n >= 3 && n <= 6) ? n : null;
+  }
+
   /** 读 URL 里的提词器开关；deps.location 可注入（测试用）。 */
   function rehearsalFromUrl(opts, deps) {
     if (opts && opts.rehearsal === true) return true;
@@ -138,6 +154,13 @@
   }
   function isTopPrize(id) { return id === 'big_prize'; }
   function isNoPrize(id) { return kindOf(id) === 'no-prize'; }
+
+  /** 契约 v5：门数夹在 3–6（非法值回落 3）。 */
+  function clampDoorCount(n) {
+    n = parseInt(n, 10);
+    if (!isFinite(n)) return 3;
+    return Math.max(3, Math.min(6, n));
+  }
 
   /** 商店表：优先用 GameData.shop，缺数据时退化到兜底表（保证零构建下永不空窗）。 */
   function shopTable() {
@@ -309,7 +332,10 @@
     var loc = (Game.deps && Game.deps.location) || root.location || {};
     var base = String(loc.href || 'index.html');
     base = base.split('#')[0].split('?')[0];
-    return base + '?seed=' + tag;
+    /* 标签是十六进制，链接统一用十进制，避免 00000010 被读成 10 而不是 16。 */
+    var url = base + '?seed=' + (parseInt(tag, 16) >>> 0);
+    if (Game.state && Game.state.mode === MODES.NORMAL && forceDoorCount) url += '&doors=' + forceDoorCount;
+    return url;
   }
 
   /* -------------------------------------------------------------- Game 本体 */
@@ -325,12 +351,15 @@
     /** 初始化：解析依赖、建立初始状态、绑定 UI。 */
     init: function (opts) {
       opts = opts || {};
+      Game._generation++;
+      Game._clearTimers();
+      Game._cancelPresentation();
       Game.deps = Object.assign(defaultDeps(), opts.deps || {});
       Game._emitter = new root.Emitter();
       Game._timers = [];
-      Game._generation = 0;
       rehearsalPref = rehearsalFromUrl(opts, Game.deps);
       seedPref = seedFromUrl(opts, Game.deps);
+      forceDoorCount = doorsFromUrl(opts, Game.deps);
       Game.state = Game._freshState(opts.mode || MODES.DEMO, opts.seed);
       var ui = Game._ui();
       if (ui.init) { try { ui.init(Game); } catch (e) { Game._warn('ui.init', e); } }
@@ -347,8 +376,9 @@
     /** 开局（IDLE/结算页 → 第 1 轮）。 */
     start: function (mode) {
       var m = (mode === MODES.NORMAL) ? MODES.NORMAL : MODES.DEMO;
-      Game._clearTimers();
       Game._generation++;
+      Game._clearTimers();
+      Game._cancelPresentation();
       Game.state = Game._freshState(m);
       Game._endingModal = null;
       Game._render();
@@ -360,6 +390,7 @@
     reset: function () {
       var gen = ++Game._generation;
       Game._clearTimers();
+      Game._cancelPresentation();
       Game.state = Game._freshState(MODES.DEMO);
       Game._endingModal = null;
       Game._render();
@@ -484,6 +515,7 @@
     beginRound: function () {
       var s = Game.state;
       s.roundResult = null;
+      s.roundDelta = null;
       s.pickedSlot = null;
       s.hostOpenedSlot = null;
       s.doubled = false;
@@ -496,6 +528,7 @@
       s.itemBuffs = { fuse: false };   // 道具增益只在「使用的这一轮」有效
       /* 闭嘴卡不在这里重置：它在 DECIDE 里使用，沉默的是**下一轮**的旁白
          （本轮旁白早已念完），由 narrate() 消费后自动清空。 */
+      s.doorCount = Game.doorCountFor(s.round);   // 契约 v5：先定门数，再发牌
       s.doors = Game.generateDoors(s.round);
       Game.setState(STATES.ROUND_INTRO);
 
@@ -909,6 +942,7 @@
       s.phase = prevPhase;
       Game.state = s;
       s.doors[slot].revealed = true;
+      s.roundDelta = applied.delta;
       /* 契约 v4 §5：孤注一掷成就 —— 加倍后开出大奖。 */
       if (multiplier === 2 && itemId === 'big_prize') s.allInWin = true;
       Game.setState(STATES.REVEAL);
@@ -918,7 +952,9 @@
         slot: slot, itemId: itemId, item: itemOf(itemId),
         delta: applied.delta, multiplier: multiplier, events: applied.events
       };
+      var gen = Game._generation;
       Game._play('playReveal', [payload]).then(function () {
+        if (gen !== Game._generation) return;
         if (Game.state.phase !== STATES.REVEAL) return;
         Game.settleRound();
       });
@@ -928,6 +964,7 @@
     /** 本轮结算：写入 log / 图鉴，判断耐心归零或进入结算展示。 */
     settleRound: function () {
       var s = Game.state;
+      var gen = Game._generation;
       var slot = s.pickedSlot;
       var itemId = s.doors[slot] ? s.doors[slot].itemId : null;
       var result = {
@@ -937,6 +974,7 @@
         itemId: itemId,
         doubled: s.doubled,
         challenged: !!(s.lastChallenge && s.lastChallenge.ok),
+        delta: Object.assign({ coins: 0, suspicion: 0, patience: 0 }, s.roundDelta || {}),
         coins: s.coins,
         suspicion: s.suspicion,
         patience: s.patience,
@@ -959,7 +997,7 @@
       if (s.patience <= 0) { Game.gameOver(); return result; }
 
       var next = function () {
-        if (special) { Game._playLine(special); }
+        if (gen !== Game._generation || Game.state.phase !== STATES.REVEAL) return;
         Game.showRoundModal(result);
         Game.setState(STATES.SETTLE_ROUND);
       };
@@ -1110,7 +1148,7 @@
           return Game.cashout('settle');
         case 'restart':
           Game._closeModal();
-          Game.start(MODES.DEMO);
+          Game.start(Game.state.mode);
           return true;
         case 'codex':
           return Game.showCodex();
@@ -1164,22 +1202,66 @@
     /**
      * 发牌（阶段 1 验收：1 大奖 / 1 空门 / 1 小奖；阶段 2 起走权重池）。
      * 不变量：恰好 ≤1 个 big_prize，且至少 1 扇「非大奖」门，保证主持人永远有门可开。
+     * 契约 v5：门数由 Game.doorCountFor 决定（3–6）；4–6 门保证恰好 1 扇大奖。
      */
     generateDoors: function (round) {
       var s = Game.state;
       var rng = s.rng;
       var ids;
       var script = Game.script();
-      if (script && script.doors && script.doors.length === 3) {
+      var n = (s && s.doorCount != null) ? clampDoorCount(s.doorCount) : Game.doorCountFor(round);
+      if (script && Array.isArray(script.doors) && script.doors.length) {
         ids = script.doors.slice();
       } else if (round <= 1) {
         ids = RNG.shuffle(rng, ['big_prize', 'small_prize', 'empty']);
+        /* 第 1 轮多出来的门只放空门/小奖（新手保护：第 1 轮不开出炸弹）。 */
+        while (ids.length < n) ids.push(RNG.int(rng, 0, 99) < 60 ? 'empty' : 'small_prize');
+        ids = RNG.shuffle(rng, ids);
       } else {
-        ids = Game._drawPool(round, 3);
+        ids = Game._drawPool(round, n);
+      }
+      /* 契约 v5：4–6 门的回合保证恰好 1 扇大奖，否则门越多期望越差；3 门沿用旧行为（≤1）。 */
+      if (ids.length > 3 && ids.indexOf('big_prize') < 0) {
+        var idx = -1;
+        for (var i = 0; i < ids.length; i++) {
+          if (isNoPrize(ids[i]) || kindOf(ids[i]) === 'hazard') { idx = i; break; }
+        }
+        ids[idx >= 0 ? idx : ids.length - 1] = 'big_prize';
       }
       return ids.map(function (id, i) {
         return { slot: i, itemId: id, opened: false, revealed: false };
       });
+    },
+
+    /**
+     * 契约 v5：本轮门数（3–6）。
+     * 优先级：演示剧本的 doors 长度 → 普通模式 / 打开 ?doors=N → config.doorCount 权重抽 → 3。
+     * 注意：权重抽会推进 state.rng；beginRound 只调一次并写入 state.doorCount，
+     * 其余调用方（测试直接调 generateDoors）走无副作用的分支。
+     */
+    doorCountFor: function (round) {
+      var s = Game.state || {};
+      var script = Game.script();
+      if (s.mode !== MODES.NORMAL && script && Array.isArray(script.doors) && script.doors.length) {
+        return clampDoorCount(script.doors.length);
+      }
+      if (s.mode === MODES.NORMAL && forceDoorCount) return forceDoorCount;
+      var dc = config().doorCount;
+      if (!dc || typeof dc !== 'object') return 3;
+      var lo = clampDoorCount(dc.min);
+      var hi = clampDoorCount(dc.max);
+      if (hi < lo) hi = lo;
+      var weights = dc.weights || {};
+      var entries = [];
+      for (var k in weights) {
+        if (!Object.prototype.hasOwnProperty.call(weights, k)) continue;
+        var n = parseInt(k, 10);
+        var w = Number(weights[k]);
+        if (isFinite(n) && n >= lo && n <= hi && isFinite(w) && w > 0) entries.push({ n: n, w: w });
+      }
+      if (!entries.length) return lo;
+      var chosen = RNG.weighted(s.rng || { seed: 1, cursor: 0 }, entries, function (e) { return e.w; });
+      return (chosen && chosen.n) ? chosen.n : lo;
     },
 
     /** 从权重池抽 n 个不重复物品，并修正到满足不变量。 */
@@ -1827,6 +1909,17 @@
       Game._timers = [];
     },
 
+    /** 局次已更新后取消旧表现层；取消会释放 Promise，但旧回调必须通过局次校验。 */
+    _cancelPresentation: function () {
+      var ui = Game.deps && Game.deps.ui;
+      if (!ui) return;
+      if (ui.cancel) Game._safe(function () { ui.cancel(); });
+      else {
+        if (ui.skip) Game._safe(function () { ui.skip(); });
+        if (ui.closeModal) Game._safe(function () { ui.closeModal(); });
+      }
+    },
+
     _toggleMode: function () {
       var next = Game.state.mode === MODES.DEMO ? MODES.NORMAL : MODES.DEMO;
       Game._toast(next === MODES.DEMO ? '已切到演示模式（固定剧本）' : '已切到普通模式（时间种子）');
@@ -2002,10 +2095,14 @@
     _deltaText: function (result) {
       if (!result) return '';
       var parts = [];
-      var it = itemOf(result.itemId);
-      if (it && it.coins) parts.push('金币 ' + (it.coins > 0 ? '+' : '') + it.coins);
-      if (it && it.patience) parts.push('耐心 ' + it.patience);
-      if (it && it.suspicion) parts.push('怀疑值 ' + it.suspicion);
+      var delta = result.delta || {};
+      var keys = ['coins', 'suspicion', 'patience'];
+      var labels = { coins: '金币', suspicion: '怀疑值', patience: '耐心' };
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var value = Number(delta[key]) || 0;
+        if (value) parts.push(labels[key] + ' ' + (value > 0 ? '+' : '') + value);
+      }
       return parts.length ? parts.join(' · ') : '没有任何变化';
     },
 

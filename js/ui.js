@@ -446,6 +446,7 @@
     dom.stage = $('stage');
     dom.roundBanner = $('round-banner');
     dom.doors = $('doors');
+    dom.doorsCount = $('doors-count');
     dom.stageHint = $('stage-hint');
     dom.rehearsal = $('rehearsal');
     dom.rehearsalText = $('rehearsal-text');
@@ -508,12 +509,12 @@
       });
     };
     a.promise = new Promise(function (resolve) { a.resolvers.push(resolve); });
-    a.finish = function () {
+    a.finish = function (cancelled) {
       if (a.finished) return;
       a.finished = true;
       for (var i = 0; i < a.timers.length; i++) root.clearTimeout(a.timers[i]);
       a.timers.length = 0;
-      if (a.onSkip) { try { a.onSkip(); } catch (e) { logErr('onSkip/' + name, e); } }
+      if (!cancelled && a.onSkip) { try { a.onSkip(); } catch (e) { logErr('onSkip/' + name, e); } }
       var list = a.resolvers;
       a.resolvers = [];
       for (var j = 0; j < list.length; j++) { try { list[j](); } catch (e2) { logErr('resolve/' + name, e2); } }
@@ -525,9 +526,9 @@
   }
 
   /** 立即结束（可选按名字过滤）动画 Promise，并补上最终外观。 */
-  function finishAnims(name) {
+  function finishAnims(name, cancelled) {
     var list = activeAnims.slice();
-    for (var i = 0; i < list.length; i++) { if (!name || list[i].name === name) list[i].finish(); }
+    for (var i = 0; i < list.length; i++) { if (!name || list[i].name === name) list[i].finish(cancelled); }
   }
 
   function setSpeaking(ok) {
@@ -582,12 +583,19 @@
   }
 
   /* ------------------------------------------------------------ 门牌渲染 */
-  function ensureDoors() {
+  function ensureDoors(state) {
     var D = d();
     var box = D.doors;
     if (!box || !doc.createElement) return [];
     var els = [];
-    for (var i = 0; i < 3; i++) {
+    var count = state && state.doors && state.doors.length;
+    count = Math.max(3, Math.min(6, count || 3));
+    var cols = count === 4 ? 2 : 3;
+    box.setAttribute('data-cols', String(cols));
+    box.setAttribute('data-rows', count > 3 ? '2' : '1');
+    box.setAttribute('aria-label', '本轮 ' + count + ' 扇门');
+    text(D.doorsCount, count + ' 扇门');
+    for (var i = 0; i < count; i++) {
       var el = box.querySelector ? box.querySelector('.door[data-slot="' + i + '"]') : null;
       if (!el) {
         el = doc.createElement('button');
@@ -602,7 +610,7 @@
       var all = box.querySelectorAll('.door');
       for (var k = all.length - 1; k >= 0; k--) {
         var sl = all[k].getAttribute('data-slot');
-        if (sl !== '0' && sl !== '1' && sl !== '2') box.removeChild(all[k]);
+        if (!/^\d+$/.test(sl || '') || Number(sl) >= count) box.removeChild(all[k]);
       }
     }
     return els;
@@ -626,7 +634,7 @@
     };
   }
 
-  function doorPicked(state, i) { return num(state && state.pickedSlot, -1) === i; }
+  function doorPicked(state, i) { return !!state && state.pickedSlot != null && num(state.pickedSlot, -1) === i; }
 
   function faceSig(dd, state, i) {
     return [dd.itemId || '', dd.revealed ? 'R' : '', dd.opened ? 'O' : '', dd.peeked ? 'K' : '', doorPicked(state, i) ? 'P' : ''].join('|');
@@ -1089,11 +1097,12 @@
   }
   function copySeed() {
     var tag = str(gameCall('seedTag') || '');
+    var value = str(gameCall('seedUrl') || ('0x' + tag));
     var done = false;
     try {
       var nav = root.navigator;
       if (nav && nav.clipboard && nav.clipboard.writeText) {
-        var pr = nav.clipboard.writeText(tag);
+        var pr = nav.clipboard.writeText(value);
         if (pr && pr.then) pr.then(null, function () {});
         done = true;
       }
@@ -1320,7 +1329,7 @@
         }
         return;
       }
-      if (key === '1' || key === '2' || key === '3') {
+      if (/^[1-6]$/.test(key)) {
         if (keyPick(num(key, 1) - 1)) e.preventDefault();
         return;
       }
@@ -1410,7 +1419,7 @@
     decorateHud('patience', D.hudPatience);
 
     /* 三扇门（仅 PICK 相位可点；REVEAL/NARRATOR/HOST_OPEN/ROUND_INTRO 等一律锁定） */
-    var els = ensureDoors();
+    var els = ensureDoors(s);
     var phasePick = phase === 'PICK';
     var live = phasePick && !locks.pick;
     for (var i = 0; i < els.length; i++) {
@@ -1494,7 +1503,7 @@
     if (phase !== 'DECIDE') releaseLock('decide');
     last = {
       phase: phase,
-      pickedSlot: num(s.pickedSlot, -1) >= 0 ? num(s.pickedSlot, -1) : null,
+      pickedSlot: s.pickedSlot != null && num(s.pickedSlot, -1) >= 0 ? num(s.pickedSlot, -1) : null,
       doubled: !!s.doubled,
       suspicion: num(s.suspicion, 0),
       peekUsed: !!s.peekUsed
@@ -2264,6 +2273,35 @@
 
   /** 立刻结束所有进行中的动画 Promise（数值结算由 game 照常执行）。 */
   UI.skip = function () { finishAnims(null); };
+
+  /** 新局取消旧动画，不补上旧门面或旧结算外观。 */
+  UI.cancel = function () {
+    finishAnims(null, true);
+    if (press.timer) root.clearTimeout(press.timer);
+    press.timer = null;
+    press.fired = false;
+    press.slot = null;
+    releaseLock('pick');
+    releaseLock('decide');
+    setSpeaking(false);
+    UI.closeModal();
+    var D = d();
+    var notices = [D.toast, D.roundBanner];
+    for (var i = 0; i < notices.length; i++) {
+      var notice = notices[i];
+      if (!notice) continue;
+      if (notice.__timer) root.clearTimeout(notice.__timer);
+      notice.__timer = null;
+      notice.hidden = true;
+      toggle(notice, 'is-show', false);
+    }
+    if (D.narratorText) D.narratorText.textContent = '……';
+    var doors = D.doors && D.doors.querySelectorAll ? D.doors.querySelectorAll('.door') : [];
+    for (var j = 0; j < doors.length; j++) {
+      doors[j].classList.remove('anim-hold', 'anim-shake', 'anim-flip', 'is-opening', 'is-peeking', 'is-reveal-win', 'is-reveal-lose');
+      doors[j].__sig = null;
+    }
+  };
 
   /** 便捷：只跳过旁白。 */
   UI.skipNarrator = function () { finishAnims('narrator'); };
