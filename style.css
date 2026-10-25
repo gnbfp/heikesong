@@ -62,6 +62,86 @@
 
   --gap: clamp(6px, 1.1vh, 14px);
   --pad: clamp(8px, 1.4vh + .4vw, 20px);
+
+  /* ======================================================================
+   * 契约 v5 §3 A1｜设计 token 层（本轮新增）
+   * 目的：把散落全文件的硬编码颜色 / 间距 / 圆角 / 阴影 / 动效时长，收敛成
+   *       一套可整体调参的变量。新增 token 全部以 --sp-* / --r-* / --sh-* /
+   *       --dur-* / --ease-* / --tone-* 命名，语义分组，方便 Lead 统一改皮。
+   * 说明：以下 token 只做「别名 + 扩展」，不改动既有 --bg-* / --gold / --fs-*
+   *       等变量的名字与取值，保证既有选择器与测试断言（grep style.css）不回归。
+   * ====================================================================== */
+
+  /* ---- 间距刻度（4px 基准，流式覆盖常用档位） ---- */
+  --sp-1: clamp(3px, .5vh, 5px);
+  --sp-2: clamp(5px, .85vh, 9px);
+  --sp-3: clamp(8px, 1.4vh, 15px);
+  --sp-4: clamp(12px, 2vh, 22px);
+  --sp-5: clamp(16px, 2.8vh, 30px);
+
+  /* ---- 圆角刻度 ---- */
+  --r-xs: 6px;
+  --r-sm: var(--radius-sm);          /* 10px，沿用既有值 */
+  --r-md: var(--radius);             /* 16px，沿用既有值 */
+  --r-pill: 999px;
+
+  /* ---- 阴影 / 光晕（含三档材质光晕，见 A3） ---- */
+  --sh-1: 0 4px 12px rgba(0, 0, 0, .35);
+  --sh-2: 0 10px 26px rgba(0, 0, 0, .45);
+  --sh-3: var(--shadow);             /* 沿用既有主阴影 */
+  --glow-rare: 0 0 0 1px rgba(245, 196, 81, .55), 0 0 26px rgba(245, 196, 81, .34), var(--shadow);
+  --glow-hazard: 0 0 0 1px rgba(255, 107, 107, .55), 0 0 26px rgba(255, 107, 107, .32), var(--shadow);
+  --glow-plain: 0 0 0 1px rgba(182, 193, 220, .18), var(--shadow);
+
+  /* ---- 动效时长（硬约束：单次 ≤ 420ms） ---- */
+  --dur-fast: 120ms;
+  --dur-1: 180ms;
+  --dur-2: 260ms;
+  --dur-3: 340ms;
+  --dur-max: 420ms;                  /* 契约上限，任何新动画不得超过它 */
+
+  /* ---- 缓动曲线 ---- */
+  --ease-out: cubic-bezier(.22, .61, .36, 1);
+  --ease-in-out: cubic-bezier(.4, 0, .2, 1);
+  --ease-back: cubic-bezier(.34, 1.4, .5, 1);   /* 轻微回弹：按压 / 选中 */
+
+  /* ---- 主题色：稀有度（三档材质） ---- */
+  --tone-plain-1: #b6c1dc;           /* 普通：冷金属灰 */
+  --tone-plain-2: #3b4566;
+  --tone-rare-1: #ffd479;            /* 稀有 / 大奖：金币金 */
+  --tone-rare-2: #a4721a;
+  --tone-hazard-1: #ff8a8a;          /* 危险 / 炸弹·陷阱：危险红 */
+  --tone-hazard-2: #7a1f26;
+
+  /* ---- 主题色：语义别名（危险色 / 金币色，A1 点名的三组） ---- */
+  --c-danger: var(--danger);
+  --c-danger-soft: rgba(255, 107, 107, .16);
+  --c-coin: var(--gold);
+  --c-coin-soft: rgba(245, 196, 81, .16);
+  --c-focus: var(--cyan);
+
+  /* ---- 可读性（A8）：正文字号下限与行高 ---- */
+  --lh-body: 1.55;                   /* ≥1.5，契约 A8 要求 */
+  --lh-tight: 1.35;
+  --hit-min: 44px;                   /* 按钮命中区下限（硬约束 §6） */
+}
+
+/* 契约 v5 §3 A7｜reduced-motion / reducedFx 一键降级
+   —— 与 js/ui.js 的 UI.reducedFx() 取「或」：任一为真，所有新动画时长归零。
+   这里用 CSS 变量把时长刻度整体压到 0s，动画声明无需逐个改。 */
+:root[data-reduced-fx="1"] {
+  --dur-fast: 0ms;
+  --dur-1: 0ms;
+  --dur-2: 0ms;
+  --dur-3: 0ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+  }
 }
 
 /* ------------------------------------------------------------------ 基础 */
@@ -266,9 +346,12 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 }
 .banner.is-show { opacity: 1; transform: translateY(0); }
 
-/* -------- 三扇门 -------- */
+/* -------- 门（契约 v5 §3 A2：网格适配 3–6 扇） -------- */
 .doors {
   display: grid;
+  /* 列数由 js/ui.js 写入的 data-cols 决定（与 state.doorCount 一致）：
+     3 → 3 列一排；4 → 2×2；5 → 3+2；6 → 3×2。
+     列宽上限沿用旧值 min(26vw, 250px)，只是把「3」提出去交给 data-cols。 */
   grid-template-columns: repeat(3, minmax(0, min(26vw, 250px)));
   justify-content: center;
   align-items: center;              /* 由 stretch 改为 center：门卡被高度上限夹住时仍垂直居中 */
@@ -276,6 +359,34 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
   min-height: 0;
   max-height: 100%;                 /* 显式上限：门区永不高于所在轨道 */
   perspective: 1400px;              /* 给门的 3D 开合动画一个统一视点 */
+}
+
+/* 4 门：2×2 —— 列宽上限同步收窄，且保证「2 × 22vw = 44vw + 间距」恒小于可用宽度，
+   任何视口都不会横向溢出（2 列在宽屏下比 3 列更宽，因此上限按 22vw 夹住）。 */
+#doors[data-cols="4"] {
+  grid-template-columns: repeat(2, minmax(0, min(22vw, 260px)));
+}
+/* 5 门：3+2（第 4、5 扇自动换到第二行，居中） */
+#doors[data-cols="5"] {
+  grid-template-columns: repeat(3, minmax(0, min(24vw, 230px)));
+}
+/* 6 门：3×2 */
+#doors[data-cols="6"] {
+  grid-template-columns: repeat(3, minmax(0, min(23vw, 215px)));
+}
+/* 兜底：data-cols 缺失 / 非法值时仍按 3 列走（与 index.html 初值一致） */
+#doors[data-cols="3"] {
+  grid-template-columns: repeat(3, minmax(0, min(26vw, 250px)));
+}
+
+/* 5/6 门是两行：把**行**设成等分高度，这样两行里的门卡绝对等高
+   （auto 行会各自按内容收缩 → 实测出现 146px / 143px 的 3px 差，肉眼可见参差）。
+   grid-auto-rows 只在多行时生效；1fr 等分会把可用高度平分给两行。 */
+#doors[data-cols="4"],
+#doors[data-cols="5"],
+#doors[data-cols="6"] {
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: center;
 }
 
 .door {
@@ -430,13 +541,124 @@ button:disabled:hover { transform: none; border-color: var(--line-soft); }
 .door.peeked .door-name { color: var(--cyan); }
 .door.peeked .door-tag { color: rgba(90, 210, 255, .85); }
 
+/* ==========================================================================
+ * 契约 v5 §3 A3｜门卡三档材质：普通 / 稀有（大奖）/ 危险（炸弹·陷阱）
+ * --------------------------------------------------------------------------
+ * 钩子约定（重要，A3 硬要求）：.door / data-slot / data-item 三个既有钩子
+ * **原样保留**，js/ui.js 的点击委托 (closest(e.target,'.door') + data-slot)
+ * 与测试断言 (#doors .door[data-slot="N"]) 都不受影响。
+ * 三档只**新增**一个属性钩子：data-tone="plain|rare|hazard"，
+ * 由 js/ui.js 的 faceDoor() 在开面时写入；开面之前一律保持 plain（不剧透）。
+ *
+ * 色 / 边 / 光晕三处同时区分，保证「肉眼可辨」：
+ *   普通 plain  —— 冷金属灰边 + 极弱冷光晕
+ *   稀有 rare   —— 金币金边 + 金内描边 + 金色外发光
+ *   危险 hazard —— 危险红边 + 红内描边 + 红色外发光 + 顶部警示斜纹
+ * ========================================================================== */
+
+/* ---- 普通（默认档；不写 data-tone 时同样是这一档） ---- */
+.door,
+.door[data-tone="plain"] {
+  border-color: rgba(182, 193, 220, .24);
+  box-shadow: var(--glow-plain);
+}
+.door[data-tone="plain"] .door-name { color: #cfd8ef; }
+
+/* ---- 稀有 / 大奖 ---- */
+.door[data-tone="rare"] {
+  border-color: var(--tone-rare-1);
+  box-shadow: inset 0 0 0 1px rgba(255, 212, 121, .45), 0 0 30px rgba(245, 196, 81, .32), var(--shadow);
+}
+.door[data-tone="rare"] .door-name { color: #ffe9b8; text-shadow: 0 0 16px rgba(245, 196, 81, .5); }
+.door[data-tone="rare"] .door-icon { filter: drop-shadow(0 0 14px rgba(245, 196, 81, .8)); }
+.door[data-tone="rare"]::after { opacity: 1; box-shadow: 0 0 20px rgba(255, 233, 168, .9); }
+
+/* ---- 危险 / 炸弹·陷阱 ---- */
+.door[data-tone="hazard"] {
+  border-color: var(--tone-hazard-1);
+  box-shadow: inset 0 0 0 1px rgba(255, 107, 107, .4), 0 0 30px rgba(255, 107, 107, .3), var(--shadow);
+}
+.door[data-tone="hazard"] .door-name { color: #ffd7d7; text-shadow: 0 0 16px rgba(255, 107, 107, .5); }
+.door[data-tone="hazard"] .door-icon { filter: drop-shadow(0 0 14px rgba(255, 107, 107, .75)); }
+.door[data-tone="hazard"]::after { opacity: 1; box-shadow: 0 0 20px rgba(255, 138, 138, .85); }
+/* 危险档额外加一条顶部警示斜纹（纯 CSS 背景，不加 DOM、不加图片） */
+.door[data-tone="hazard"] .door-face {
+  background-image: repeating-linear-gradient(45deg,
+    rgba(255, 107, 107, .13) 0 6px, rgba(255, 107, 107, 0) 6px 12px);
+}
+
+/* ---- 已开奖的三档：把材质色再压亮一档，便于「结果一眼可辨」 ---- */
+.door[data-tone="rare"].is-revealed,
+.door[data-tone="rare"].is-opened {
+  border-color: var(--tone-rare-1);
+  box-shadow: inset 0 0 0 1px rgba(255, 212, 121, .5), 0 0 44px rgba(245, 196, 81, .34), var(--shadow);
+}
+.door[data-tone="hazard"].is-revealed,
+.door[data-tone="hazard"].is-opened {
+  border-color: var(--tone-hazard-1);
+  box-shadow: inset 0 0 0 1px rgba(255, 107, 107, .48), 0 0 44px rgba(255, 107, 107, .34), var(--shadow);
+}
+
+/* ---- 焦点态（A6 的 [ ] 切换焦点 / Tab 都要看得见） ---- */
+.door.is-focus,
+.door:focus-visible {
+  outline: none;
+  box-shadow: var(--ring), var(--shadow);
+  border-color: var(--cyan);
+}
+
+/* ---- 按压反馈（A4）：只动 transform/opacity，时长走 token ---- */
+.door.is-press { transform: translateY(1px) scale(.975); transition: transform var(--dur-fast) var(--ease-out); }
+.door .door-face { transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out); }
+
 /* -------- 门动画（开合 = 3D 掀门；装饰性光效另计） -------- */
 .door.is-peeking { animation: peekPulse .42s ease; }
-.door.is-opening { animation: openPulse .72s ease; }
-.door.anim-shake { animation: doorShake .42s ease-in-out 2; }
-.door.anim-flip { animation: doorFlip .5s cubic-bezier(.3, 1.4, .5, 1); }
-.door.anim-flip .door-face { animation: doorSwing .5s cubic-bezier(.25, .9, .3, 1); }
+/* A4：主持人开门时长收敛到 ≤420ms（原 .72s 超出契约上限） */
+.door.is-opening { animation: openPulse var(--dur-max) var(--ease-out); }
+.door.anim-shake { animation: doorShake var(--dur-3) ease-in-out 1; }
+.door.anim-flip { animation: doorFlip var(--dur-max) var(--ease-back); }
+.door.anim-flip .door-face { animation: doorSwing var(--dur-max) var(--ease-out); }
 .door.anim-hold { pointer-events: none; }
+/* A4：选中态过渡（点击 → 抬升 + 金边），纯 transform/box-shadow 过渡 */
+.door.is-picked { transition: transform var(--dur-2) var(--ease-back), box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out); }
+
+/* A4：开奖数值飘字（由 playReveal 生成 .reveal-float） */
+.reveal-float {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 6;
+  pointer-events: none;
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, .7);
+  animation: revealFloat var(--dur-max) var(--ease-out) forwards;
+}
+.reveal-float.up { color: var(--green-lt); }
+.reveal-float.down { color: var(--danger); }
+@keyframes revealFloat {
+  0%   { opacity: 0; transform: translate(-50%, -30%) scale(.8); }
+  35%  { opacity: 1; transform: translate(-50%, -75%) scale(1.06); }
+  100% { opacity: 0; transform: translate(-50%, -160%) scale(1); }
+}
+
+/* A7：reduced-motion / reducedFx 下一键关闭所有新动画（时长归零） */
+:root[data-reduced-fx="1"] .door,
+:root[data-reduced-fx="1"] .reveal-float,
+:root[data-reduced-fx="1"] .decide-btn,
+:root[data-reduced-fx="1"] #hud .hud-item,
+:root[data-reduced-fx="1"] #modal .modal-panel {
+  animation-duration: 0s !important;
+  transition-duration: 0s !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .door, .reveal-float, .decide-btn, #hud .hud-item, #modal .modal-panel,
+  .bag, #shop, .float-delta, .coin-fly {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}
 
 @keyframes peekPulse {
   0%   { box-shadow: 0 0 0 0 rgba(90, 210, 255, .5); }
@@ -1493,6 +1715,73 @@ ul.persona-list > li.persona-row { display: list-item; }
   pointer-events: none;
 }
 .portrait-hint[hidden] { display: none; }
+/* 契约 v5 §3 A8：竖屏提示不得遮挡关键按钮。
+   原实现左右居中、上下居中，正好压在 #doors（门卡）上。
+   改为贴底居中 + 半透明，且 z-index 低于弹层（60）与 toast（60）：
+   门卡的点击热区因此仍完全可用，提示只占舞台下方一条。 */
+.portrait-hint {
+  top: auto;
+  bottom: calc(var(--pad) + 2.2em);
+  max-width: min(86vw, 420px);
+  text-align: center;
+  line-height: var(--lh-body);
+}
+
+/* ======================================================================
+ * 契约 v5 §3 A5｜HUD 三资源卡 + 结算成绩卡层次
+ * ====================================================================== */
+
+/* 三资源卡：图标 + 标签 + 数值三层对齐，命中区抬到 44px 以上（硬约束 §6） */
+.hud-item { min-height: var(--hit-min); }
+.hud-label { line-height: var(--lh-tight); }
+.hud-value { line-height: 1.15; }
+
+/* A5：数值滚动时的轻高亮（由 setHudAnimated 加 .is-counting） */
+.hud-item.is-counting { border-color: rgba(255, 255, 255, .18); }
+.hud-item.is-counting .hud-value { text-shadow: 0 0 14px currentColor; }
+
+/* A5：三资源卡的变化高亮统一到 token（原为逐条硬编码 rgba） */
+.hud-item.flash-up { animation: flashUp var(--dur-2) var(--ease-out); }
+.hud-item.flash-down { animation: flashDown var(--dur-2) var(--ease-out); }
+.hud-item.flash { animation: flashNeutral var(--dur-2) var(--ease-out); }
+
+/* 结算页成绩卡层次：轮次 / 金币 / 称号 / 高光 / 种子 / 分享
+   —— 用 .modal-body 内的既有语义标签做排版层次（不改任何 DOM 结构、不改文案）。 */
+.modal-body p.big {
+  line-height: var(--lh-body);
+  margin: .2em 0 .5em;
+}
+.modal-body .fine { line-height: var(--lh-body); }
+.modal-body .muted { line-height: var(--lh-body); }
+.modal-body b { line-height: var(--lh-body); }
+/* 结算正文里的「称号 / 结局」一行给一个独立卡片感（只加视觉，不动结构） */
+.modal.kind-cashout .modal-body p.big,
+.modal.kind-gameover .modal-body p.big {
+  padding: .5em .7em;
+  border: 1px solid rgba(255, 212, 121, .28);
+  border-left: 3px solid var(--gold-2);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, rgba(255, 212, 121, .1), rgba(255, 212, 121, .03));
+}
+/* 种子行的分享按钮命中区（硬约束 ≥44px 只作用于主按钮，这里保证可点面积足够） */
+.seed-copy { min-height: 30px; }
+.modal-btn.primary { min-height: var(--hit-min); }
+
+/* ======================================================================
+ * 契约 v5 §3 A8｜可读性与移动端
+ * ====================================================================== */
+body { line-height: var(--lh-body); }
+.modal-body { line-height: var(--lh-body); }
+#narrator-text { line-height: var(--lh-body); }
+.hint { line-height: var(--lh-body); }
+/* 小字号元素（成就 / 人格描述）行高也抬到 ≥1.5，字号不低于现状 */
+.ach-desc, .persona-desc { line-height: 1.5; }
+
+/* 竖屏（≤480 宽）：竖屏提示贴底，且不覆盖门卡与决策按钮 */
+@media (max-width: 480px) {
+  .portrait-hint { bottom: calc(var(--pad) + .4em); font-size: var(--fs-xs); }
+  .doors { gap: clamp(6px, 2vw, 12px); }
+}
 
 /* ============================ 契约 v3 表现层（§1.3 / §4.2 / §5.1 / §5.3） */
 
@@ -1551,10 +1840,12 @@ ul.persona-list > li.persona-row { display: list-item; }
 }
 /* 提词器固定在右下角浮层里，不参与布局（见上）；这里只在矮视口把它缩到最小。 */
 
-/* 开奖光效（§5.3）：金色光晕 / 红色抖动，keyframes ≤600ms，纯 CSS */
-.door.is-reveal-win { animation: revealWin .58s ease-out; }
-.door.is-reveal-lose { animation: revealLose .58s ease-out; }
-.door.is-reveal-lose .door-face { animation: revealShake .5s ease-out; }
+/* 开奖光效（§5.3）：金色光晕 / 红色抖动。
+   契约 v5 §3 A4：本轮把这三个门相关动效收敛到 --dur-max（420ms）以内
+   （原为 .58s / .58s / .5s，超出契约上限；观感差异极小，但严格合规）。 */
+.door.is-reveal-win { animation: revealWin var(--dur-max) ease-out; }
+.door.is-reveal-lose { animation: revealLose var(--dur-max) ease-out; }
+.door.is-reveal-lose .door-face { animation: revealShake var(--dur-max) ease-out; }
 @keyframes revealWin {
   0%   { box-shadow: 0 0 0 0 rgba(255, 212, 121, 0), inset 0 0 0 rgba(255, 212, 121, 0); }
   35%  { box-shadow: 0 0 34px 8px rgba(255, 212, 121, .55), inset 0 0 26px rgba(255, 212, 121, .3); }

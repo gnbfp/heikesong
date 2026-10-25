@@ -435,6 +435,7 @@
     dom.topbar = $('topbar');
     dom.roundChip = $('round-chip');
     dom.modeChip = $('mode-chip');
+    dom.doorsCount = $('doors-count');      /* 契约 v5 §2.3：本轮门数徽标（A2） */
     dom.btnReset = $('btn-reset');
     dom.btnDemo = $('btn-demo');
     dom.btnShop = $('btn-shop');
@@ -541,6 +542,51 @@
     }
   }
 
+  /* ---------------------------------------------------- 契约 v5 §3 A4 交互动画 */
+
+  /**
+   * 按压反馈：加一下 .is-press（CSS 只动 transform），≤ --dur-fast 后移除。
+   * 降级（skipAnim / reduced-motion）时直接返回：不加类、不动画，但点击行为照常。
+   * 返回是否真的播了动画。
+   */
+  function pressFeedback(el) {
+    if (!el || !el.classList) return false;
+    if (reducedFx()) return false;
+    el.classList.add('is-press');
+    later(140, function () { if (el.classList) el.classList.remove('is-press'); });
+    return true;
+  }
+
+  /**
+   * 开奖数值飘字：在门卡上浮一个 ±N（A4「数值飘字」）。
+   * 纯 transform/opacity，≤ --dur-max；降级时不生成（数值仍由 UI.flash 写入 HUD）。
+   */
+  function revealFloat(el, deltas) {
+    var D = d();
+    if (!el || !doc.createElement || reducedFx()) return;
+    var parts = [];
+    for (var i = 0; i < RES_ORDER.length; i++) {
+      var k = RES_ORDER[i];
+      var v = Math.round(num(deltas[k], 0));
+      if (!v) continue;
+      parts.push({ t: (v > 0 ? '+' : '−') + Math.abs(v), up: v > 0 });
+    }
+    if (!parts.length) return;
+    for (var j = 0; j < parts.length; j++) {
+      var sp = doc.createElement('span');
+      sp.className = 'reveal-float ' + (parts[j].up ? 'up' : 'down');
+      sp.setAttribute('aria-hidden', 'true');
+      /* 多条飘字错开一点，避免完全重叠 */
+      if (j) sp.setAttribute('style', 'margin-left:' + (j * 34) + 'px');
+      sp.textContent = parts[j].t;
+      el.appendChild(sp);
+      (function (node) {
+        later(430, function () { if (node.parentNode) node.parentNode.removeChild(node); });
+      })(sp);
+    }
+    return D;
+  }
+
   /* ------------------------------------------------------------ 连点去抖锁 */
   function armLock(name, ms) {
     locks[name] = true;
@@ -582,12 +628,39 @@
   }
 
   /* ------------------------------------------------------------ 门牌渲染 */
-  function ensureDoors() {
+
+  /* 契约 v5 §2.1：门数 3–6，由 state.doorCount 决定；引擎未给时按 state.doors
+     的实际长度兜底，再退到 3，保证任何情况下都不会渲染出 0 扇门。 */
+  function doorCountOf(state) {
+    var s = state || lastState || {};
+    var n = Math.round(num(s.doorCount, 0));
+    if (!(n >= 3 && n <= 6)) {
+      var arr = s.doors;
+      n = (arr && arr.length) ? Math.round(arr.length) : 3;
+    }
+    return Math.max(3, Math.min(6, n || 3));
+  }
+
+  /**
+   * 保证 #doors 里有恰好 n 扇门（n = doorCountOf(state)），并同步网格列数。
+   * 契约 v5 §3 A2：
+   *   - 读 state.doorCount 写 #doors[data-cols]，3→3 列、4→2×2、5→3+2、6→3×2
+   *     （列模板在 style.css 里按 data-cols 定义，这里只负责写属性）
+   *   - 门卡等宽等高：宽由 grid 列宽决定、高由 .door 的 max-height 夹紧
+   *   - 既有钩子 .door / data-slot 原样保留（事件委托与测试断言都依赖它们）
+   * 返回长度恰为 n 的元素数组。
+   */
+  function ensureDoors(n) {
     var D = d();
     var box = D.doors;
     if (!box || !doc.createElement) return [];
+    var want = Math.max(3, Math.min(6, Math.round(num(n, 3)) || 3));
+
+    /* 网格列数：与门数一致（契约 §3 A2 的 data-cols 约定） */
+    if (box.setAttribute) box.setAttribute('data-cols', String(want));
+
     var els = [];
-    for (var i = 0; i < 3; i++) {
+    for (var i = 0; i < want; i++) {
       var el = box.querySelector ? box.querySelector('.door[data-slot="' + i + '"]') : null;
       if (!el) {
         el = doc.createElement('button');
@@ -598,11 +671,24 @@
       }
       els.push(el);
     }
+    /* 收缩：超过 want 的旧门（如上一局 6 门、本局 3 门）要移除 */
     if (box.querySelectorAll) {
       var all = box.querySelectorAll('.door');
       for (var k = all.length - 1; k >= 0; k--) {
-        var sl = all[k].getAttribute('data-slot');
-        if (sl !== '0' && sl !== '1' && sl !== '2') box.removeChild(all[k]);
+        var sl = Math.round(num(all[k].getAttribute('data-slot'), -1));
+        if (!(sl >= 0 && sl < want)) box.removeChild(all[k]);
+      }
+      /* 顺序纠正：insertBefore 式插入会把新门追加到末尾，这里按 data-slot 重排一次，
+         保证视觉顺序（第 1 扇在左上）与槽位号一致。 */
+      var cur = box.querySelectorAll('.door');
+      for (var q = 0; q < cur.length; q++) {
+        var wantEl = null;
+        for (var w = 0; w < cur.length; w++) {
+          if (Math.round(num(cur[w].getAttribute('data-slot'), -1)) === q) { wantEl = cur[w]; break; }
+        }
+        if (!wantEl) continue;
+        var atPos = box.childNodes ? box.childNodes[q] : null;
+        if (atPos !== wantEl && box.insertBefore) box.insertBefore(wantEl, atPos || null);
       }
     }
     return els;
@@ -632,6 +718,29 @@
     return [dd.itemId || '', dd.revealed ? 'R' : '', dd.opened ? 'O' : '', dd.peeked ? 'K' : '', doorPicked(state, i) ? 'P' : ''].join('|');
   }
 
+  /**
+   * 契约 v5 §3 A3｜门卡三档材质判定。
+   * 只读 state（绝不改写）：未开面 → 'plain'（不剧透）；已开面 → 按 kind 分档。
+   *   big_prize（或任何 kind==='prize' 且金币最高的大奖类）→ 'rare'
+   *   bomb / trap（kind === 'hazard'）                      → 'hazard'
+   *   其余（empty / small_prize / 道具）                     → 'plain'
+   * 说明：判定只发生在 revealed/opened 之后，玩家在 PICK 阶段看不到任何提示，
+   *       因此不违反「别信旁白」的信息隐藏原则，也不改状态机行为。
+   */
+  function toneOf(itemId) {
+    var id = str(itemId);
+    if (!id) return 'plain';
+    if (id === 'big_prize') return 'rare';
+    if (id === 'bomb' || id === 'trap') return 'hazard';
+    /* 数据驱动兜底：引擎换了物品 id 也能分档（读 data.js，不联网） */
+    var it = findItem(id);
+    if (it) {
+      if (str(it.kind) === 'hazard') return 'hazard';
+      if (str(it.kind) === 'prize' && num(it.coins, 0) >= 100) return 'rare';
+    }
+    return 'plain';
+  }
+
   /** 门面：已翻开的门显示物品；被窥视过的门只显示“已窥视”标记，绝不泄露 itemId。 */
   function faceDoor(el, dd, state, i) {
     if (!el) return;
@@ -646,6 +755,11 @@
     } else if (picked) {
       tag = '已选';
     }
+    /* A3：材质档位写成 data-tone 属性（CSS 侧三档色/边/光晕）；
+       未开面一律 plain，开面后才按物品 kind 分档。 */
+    var tone = show ? toneOf(dd.itemId) : 'plain';
+    if (el.setAttribute) el.setAttribute('data-tone', tone);
+    if (show && el.setAttribute) el.setAttribute('data-item', str(dd.itemId));
     html(el,
       '<span class="door-no" aria-hidden="true">' + (i + 1) + '</span>' +
       '<span class="door-face">' +
@@ -908,6 +1022,64 @@
     emit({ type: 'pick', slot: slot });
     return true;
   }
+
+  /* ---- 契约 v5 §3 A6：[ ] 切换焦点 + Enter 确认（仅 PICK 相位） ---- */
+
+  /** 本轮所有「可交互」的门槽位（PICK 相位下即全部未锁定的门）。 */
+  function liveSlots() {
+    var D = d();
+    var out = [];
+    if (!D.doors || !D.doors.querySelectorAll) return out;
+    var all = D.doors.querySelectorAll('.door');
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].classList && all[i].classList.contains('is-live')) {
+        out.push(Math.round(num(all[i].getAttribute('data-slot'), -1)));
+      }
+    }
+    out.sort(function (a, b) { return a - b; });
+    return out;
+  }
+
+  /**
+   * 把焦点在「可交互的门」之间移动 step 格（循环）。
+   * 返回是否消费了这次按键。非 PICK 相位直接返回 false，不抢键。
+   */
+  function moveFocus(step) {
+    if (phaseNow() !== 'PICK' || !canPick()) return false;
+    var slots = liveSlots();
+    if (!slots.length) return false;
+    var cur = -1;
+    for (var i = 0; i < slots.length; i++) { if (slots[i] === focusSlot) { cur = i; break; } }
+    var next = cur < 0
+      ? (step > 0 ? 0 : slots.length - 1)
+      : (cur + (step > 0 ? 1 : -1) + slots.length) % slots.length;
+    focusSlot = slots[next];
+    var el = doorEl(focusSlot);
+    if (el && el.focus) { try { el.focus(); } catch (e) { logErr('focus door', e); } }
+    applyFocusRing();
+    UI.hint('焦点：' + (focusSlot + 1) + ' 号门 · Enter 选定');
+    return true;
+  }
+
+  /** 焦点圈只更新类名（不整页重渲染，避免打断动画）。 */
+  function applyFocusRing() {
+    var D = d();
+    if (!D.doors || !D.doors.querySelectorAll) return;
+    var all = D.doors.querySelectorAll('.door');
+    for (var i = 0; i < all.length; i++) {
+      toggle(all[i], 'is-focus', Math.round(num(all[i].getAttribute('data-slot'), -1)) === focusSlot);
+    }
+  }
+
+  /** Enter 确认：等价于点一下当前焦点门（没有焦点则先取第一扇）。 */
+  function confirmFocus() {
+    if (focusSlot < 0) {
+      var slots = liveSlots();
+      if (!slots.length) return false;
+      focusSlot = slots[0];
+    }
+    return keyPick(focusSlot);
+  }
   function keyModalPrimary() {
     var D = d();
     if (!D.modal || D.modal.hidden || !D.modal.querySelector) return false;
@@ -1163,8 +1335,17 @@
       if (press.fired && press.slot === slot) { press.fired = false; return; }   /* 长按已处理，吞掉尾随 click */
       if (!canPick()) return;
       sfx('click');
+      /* A4：点击按压反馈（纯 transform，时长走 token；降级时立即结束） */
+      pressFeedback(el);
+      focusSlot = slot;                       /* A6：鼠标点门也同步键盘焦点 */
       armLock('pick', CLICK_LOCK_MS);
       emit({ type: 'pick', slot: slot });
+    });
+
+    /* A4：决策按钮按下反馈（同样只动 transform/opacity） */
+    on(D.decide, 'pointerdown', function (e) {
+      var btn = closest(e.target, '.decide-btn');
+      if (btn && !btn.disabled) pressFeedback(btn);
     });
 
     on(D.doors, 'pointerdown', function (e) {
@@ -1320,8 +1501,21 @@
         }
         return;
       }
-      if (key === '1' || key === '2' || key === '3') {
+      /* 契约 v5 §3 A6：1–6 选门（门数 3–6）。keyPick 内部会校验相位/锁定/槽位是否存在，
+         因此按到超出本轮门数的数字会安全地什么都不做。 */
+      if (key >= '1' && key <= '6' && key.length === 1) {
         if (keyPick(num(key, 1) - 1)) e.preventDefault();
+        return;
+      }
+      /* 契约 v5 §3 A6：[ / ] 切换门的焦点（仅 PICK 相位有意义） */
+      if (key === '[' || key === ']' || key === '【' || key === '】') {
+        if (moveFocus(key === ']' || key === '】' ? 1 : -1)) e.preventDefault();
+        return;
+      }
+      /* 契约 v5 §3 A6：Enter 确认当前焦点门。PICK 相位 = 选门；
+         DECIDE 相位不抢 Enter（交给弹层/默认行为），只处理 PICK，避免破坏既有映射。 */
+      if (key === 'Enter') {
+        if (phaseNow() === 'PICK' && confirmFocus()) { e.preventDefault(); }
         return;
       }
       var low = str(key).toLowerCase();
@@ -1391,10 +1585,18 @@
     toggle(D.modeChip, 'chip-quiet', demo);
     toggle(D.modeChip, 'chip-live', !demo);
 
-    /* HUD 数值 */
-    setHudValue(D.hudCoins, num(s.coins, 0));
-    setHudValue(D.hudSuspicion, num(s.suspicion, 0));
-    setHudValue(D.hudPatience, num(s.patience, 0));
+    /* 契约 v5 §3 A2：门数徽标「N 扇门」，与 state.doorCount 一致 */
+    var nDoors = doorCountOf(s);
+    text(D.doorsCount, nDoors + ' 扇门');
+    if (D.doorsCount && D.doorsCount.setAttribute) {
+      D.doorsCount.setAttribute('data-count', String(nDoors));
+      D.doorsCount.title = '本轮 ' + nDoors + ' 扇门（3–6 随机）';
+    }
+
+    /* HUD 数值（A5：硬币/怀疑值/耐心的变化走滚动数字，见 setHudAnimated） */
+    setHudAnimated(D.hudCoins, num(s.coins, 0), 'coins');
+    setHudAnimated(D.hudSuspicion, num(s.suspicion, 0), 'suspicion');
+    setHudAnimated(D.hudPatience, num(s.patience, 0), 'patience');
     toggle(D.hudCoins, 'is-low', num(s.coins, 0) <= 0);
     toggle(D.hudSuspicion, 'is-low', num(s.suspicion, 0) < suspicionCost());
     toggle(D.hudPatience, 'is-low', num(s.patience, 0) <= 1);
@@ -1409,8 +1611,8 @@
     decorateHud('suspicion', D.hudSuspicion);
     decorateHud('patience', D.hudPatience);
 
-    /* 三扇门（仅 PICK 相位可点；REVEAL/NARRATOR/HOST_OPEN/ROUND_INTRO 等一律锁定） */
-    var els = ensureDoors();
+    /* 门（3–6 扇，仅 PICK 相位可点；REVEAL/NARRATOR/HOST_OPEN/ROUND_INTRO 等一律锁定） */
+    var els = ensureDoors(nDoors);
     var phasePick = phase === 'PICK';
     var live = phasePick && !locks.pick;
     for (var i = 0; i < els.length; i++) {
@@ -1421,18 +1623,24 @@
         el.__sig = sig;
         if (!el.classList.contains('anim-hold')) faceDoor(el, dd, s, i);
       }
+      /* A3：三档材质要在 .anim-hold（动画进行中）期间也保持一致，
+         所以只要 data-tone 与判定不符就补写一次（幂等，不重建门面）。 */
+      var wantTone = (dd.revealed || dd.opened) ? toneOf(dd.itemId) : 'plain';
+      if (el.getAttribute && el.getAttribute('data-tone') !== wantTone) el.setAttribute('data-tone', wantTone);
       toggle(el, 'is-picked', doorPicked(s, i));
       toggle(el, 'is-opened', dd.opened && !dd.revealed);
       toggle(el, 'is-revealed', dd.revealed);
       toggle(el, 'peeked', dd.peeked);
       toggle(el, 'is-live', live);
       toggle(el, 'is-locked', !live);
+      toggle(el, 'is-focus', i === focusSlot && live);
       if (el.setAttribute) {
         el.setAttribute('aria-disabled', live ? 'false' : 'true');
         el.setAttribute('aria-label', doorAria(dd, s, i));
         el.tabIndex = live ? 0 : -1;
       }
     }
+    if (focusSlot >= els.length) focusSlot = -1;
 
     /* 舞台提示 */
     text(D.stageHint, hintText(s, phase));
@@ -1470,6 +1678,12 @@
     /* 偏好缓存（只读；音效/BGM 开关与动画速度都看它） */
     prefCache = prefsOf(s);
 
+    /* 契约 v5 §3 A7：把降级开关写进文档根属性，CSS 侧据此把动画时长压到 0。
+       （state.flags.skipAnim 或 prefers-reduced-motion 任一为真即降级） */
+    if (doc && doc.documentElement && doc.documentElement.setAttribute) {
+      doc.documentElement.setAttribute('data-reduced-fx', reducedFx() ? '1' : '0');
+    }
+
     /* 旁白面板的人格图标前缀（契约 v4 §4.3）：走 ::before 的 content，不占文字节点、不干扰打字机 */
     if (D.narratorText && D.narratorText.setAttribute && !speaking) {
       var pv = personaOf(str(s.personality) || str(prefCache.personality));
@@ -1489,8 +1703,8 @@
 
     UI.setControls(s);
 
-    /* 相位变化即释放连点锁 */
-    if (phase !== 'PICK') releaseLock('pick');
+    /* 相位变化即释放连点锁（A6：同时清掉跨轮残留的门焦点） */
+    if (phase !== 'PICK') { releaseLock('pick'); focusSlot = -1; }
     if (phase !== 'DECIDE') releaseLock('decide');
     last = {
       phase: phase,
@@ -1507,6 +1721,57 @@
     var el = item.querySelector ? item.querySelector('.hud-value') : null;
     text(el, Math.round(num(v, 0)));
   }
+
+  /* 契约 v5 §3 A6：键盘 [ ] 切换的焦点槽位；-1 表示未设置（第一个可用的门兜底） */
+  var focusSlot = -1;
+
+  /**
+   * 契约 v5 §3 A4/A5｜HUD 金币滚动。
+   * 数值变化时从旧值滚到新值（纯文本更新，不是 transform 动画，
+   * 但同样受 reducedFx 约束：降级时一步到位，数值照常）。
+   * 滚动过程中被打断（render 再次调用）就立即收敛到最新目标值。
+   */
+  function setHudAnimated(item, v, res) {
+    if (!item) return;
+    var el = item.querySelector ? item.querySelector('.hud-value') : null;
+    if (!el) return;
+    var to = Math.round(num(v, 0));
+    var from = item.__hudShown;
+    if (from == null || reducedFx() || from === to) {
+      if (item.__hudTimer) { root.clearTimeout(item.__hudTimer); item.__hudTimer = null; }
+      item.__hudShown = to;
+      text(el, to);
+      return;
+    }
+    if (item.__hudTimer) { root.clearTimeout(item.__hudTimer); item.__hudTimer = null; }
+    var steps = 8;
+    var i = 0;
+    var delta = to - from;
+    item.__hudShown = to;
+    item.__hudTimer = root.setInterval(function () {
+      i++;
+      if (i >= steps) {
+        root.clearInterval(item.__hudTimer);
+        item.__hudTimer = null;
+        text(el, to);
+        return;
+      }
+      text(el, Math.round(from + delta * (i / steps)));
+    }, Math.max(16, Math.round(260 / steps)));
+    toggle(item, 'is-counting', true);
+    later(300, function () { toggle(item, 'is-counting', false); });
+  }
+
+  /**
+   * 契约 v5 §3 A7｜统一降级开关。
+   * 读 state.flags.skipAnim 与 matchMedia('(prefers-reduced-motion: reduce)') 的「或」。
+   * 为真时：所有新动画时长归零，但数值结算完全照常（只跳过视觉过渡）。
+   */
+  function reducedFx() {
+    if (skipAnimOn()) return true;
+    return prefersReducedMotion();
+  }
+  UI.reducedFx = reducedFx;
 
   /** HUD 高亮 / 抖动 + 浮动数字；delta 为增量，state 有则顺带刷新数值。 */
   UI.flash = function (res, delta, state) {
@@ -2161,18 +2426,19 @@
     }
 
     sfx('open');                         /* 开门轻点：跳过动画时也响（时长 0.16s，不拖节奏） */
-    if (skipAnimOn()) { applyFinal(); return Promise.resolve(); }
+    if (reducedFx()) { applyFinal(); return Promise.resolve(); }
 
     var a = beginAnim('hostOpen', applyFinal);
     if (el) el.classList.add('anim-hold', 'is-opening');
     UI.toast(msg);
 
-    a.after(scaled(720)).then(function () {
+    /* 契约 v5 §3 A4：开门总时长 ≤420ms（原 720+420=1140ms 超出上限，已收敛）。 */
+    a.after(scaled(280)).then(function () {
       if (a.finished) return;
       if (el) { el.classList.remove('is-opening'); el.classList.add('is-opened', 'anim-hold'); }
       faceDoor(el, { slot: s, itemId: p.itemId, opened: true, revealed: false, peeked: false }, null, s);
       UI.banner(msg, 1800);
-      a.after(scaled(420)).then(function () {
+      a.after(scaled(140)).then(function () {
         if (a.finished) return;
         if (el) el.classList.remove('anim-hold');
         a.finish();
@@ -2222,6 +2488,7 @@
         el.__sig = null;
       }
       revealGlow(el, outcome);                 /* 契约 v3 §5.3：开奖金晕 / 红闪（≤600ms） */
+      revealFloat(el, deltas);                 /* 契约 v5 §3 A4：开奖数值飘字（降级时不生成） */
       sfx(outcome);
       applyDeltas();
       /* 大奖时刻撒彩带（P1 装饰）：进账 ≥100 金币才算「大奖」 */
@@ -2230,14 +2497,16 @@
       if (dt) UI.toast(line);
     }
 
-    if (skipAnimOn()) { applyFinal(); return Promise.resolve(); }
+    if (reducedFx()) { applyFinal(); return Promise.resolve(); }
 
     var a = beginAnim('reveal', applyFinal);
     if (el) el.classList.add('anim-hold', 'anim-shake');
     UI.banner(line, mult > 1 ? 2100 : 1700);
 
-    /* 加倍时动画略长（清单阶段 3）；再乘以设置里的动画速度系数（0.5×/1×/1.5×） */
-    var total = scaled(mult > 1 ? 1300 : 950);
+    /* 契约 v5 §3 A4：单次动画 ≤420ms（硬约束）。
+       加倍时取上限 420ms，平时 340ms；再乘以设置里的动画速度系数（0.5×/1×/1.5×）。
+       Math.min(t, 420) 是硬闸：即使设置成「慢速」也不会越过契约上限。 */
+    var total = Math.min(420, scaled(mult > 1 ? 420 : 340));
     var t1 = Math.round(total * 0.42);
     var t2 = Math.round(total * 0.75);
 
