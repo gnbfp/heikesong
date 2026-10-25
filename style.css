@@ -2025,3 +2025,424 @@ body { line-height: var(--lh-body); }
   .bag.is-empty { width: auto; }
   .bag-list { flex-direction: row; }
 }
+
+/* =====================================================================
+   契约 v6 §4：首页 / 难度选择 / 换门选门弹层 / 质疑提示条 / 决策高亮
+   —— 只加样式与浮层，不新增参与布局的块级元素（#hint-claim 是 position:fixed）
+   ===================================================================== */
+
+/* --- 4.1 首页（#boot 内） ------------------------------------------- */
+/* #boot 原来是「一行标题 + 两个按钮」，现在要装剧情 + 金币 + 难度 + 四个入口：
+   内容变高后必须允许极端矮视口内部滚动（16:9 演示分辨率下内容装得下，不会出现
+   滚动条），否则矮窗口会把底部按钮直接裁掉。 */
+#boot {
+  overflow: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  align-content: safe center;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 212, 121, .3) transparent;
+}
+#boot::-webkit-scrollbar { width: 8px; }
+#boot::-webkit-scrollbar-thumb { background: rgba(255, 212, 121, .28); border-radius: 8px; }
+#boot::-webkit-scrollbar-track { background: transparent; }
+
+/* 剧情 */
+#home-story, .home-story {
+  display: grid;
+  gap: .38em;
+  justify-items: center;
+  width: min(92vw, 54ch);
+  margin: 0 auto;
+}
+#home-story p, .home-story-p {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: clamp(.8rem, .95vw, .95rem);
+  line-height: 1.62;
+  text-align: left;
+}
+#home-story p:first-child, .home-story-p:first-child { color: var(--fg); }
+#home-story p:first-child::first-letter, .home-story-p:first-child::first-letter {
+  color: var(--gold-2);
+  font-weight: 700;
+}
+
+/* 金币余额（跨局钱包） */
+#home-coins, .home-coins {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .4em;
+  margin: 0 auto;
+  padding: .32em .95em;
+  border: 1px solid rgba(255, 212, 121, .42);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 212, 121, .13), rgba(16, 22, 38, .78));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 8px 20px rgba(0, 0, 0, .38);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+#home-coins .home-coins-num, .home-coins-num {
+  color: var(--gold-2);
+  font-size: clamp(1.15rem, 1.9vw, 1.6rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+.home-coins-label { color: var(--fg-dim); font-size: .84em; }
+#home-coins.is-bump, #home-coins.is-bump .home-coins-num, .home-coins.is-bump, .home-coins.is-bump .home-coins-num {
+  animation: coinBump .58s ease-out;
+}
+@keyframes coinBump {
+  0% { transform: scale(1); }
+  32% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* 难度三选一 */
+#difficulty, .difficulty {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 5px;
+  margin: 0 auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(10, 14, 26, .74);
+}
+#difficulty [data-diff] {
+  min-width: 5em;
+  padding: .38em .9em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: .9rem;
+  font-weight: 600;
+  text-align: center;
+}
+#difficulty [data-diff]:hover { color: var(--fg); background: rgba(255, 255, 255, .06); }
+#difficulty [data-diff]:focus-visible {
+  outline: 2px solid #fff6d8;
+  outline-offset: 2px;
+}
+#difficulty [data-diff].is-active {
+  color: #241703;
+  background: linear-gradient(180deg, #ffe9a9, var(--gold-2) 55%, #d9a13d);
+  box-shadow: 0 0 0 1px rgba(255, 212, 121, .55), 0 5px 16px rgba(255, 180, 60, .3);
+}
+#difficulty [data-diff].is-active:hover { color: #241703; }
+
+/* 首页四个入口按钮：次级金边层次，与主按钮（开始游戏）区分 */
+#btn-home-shop, #btn-home-codex, #btn-home-help, #btn-home-settings {
+  padding: .5em 1.1em;
+  border: 1px solid rgba(255, 212, 121, .34);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255, 212, 121, .15), rgba(16, 22, 38, .92));
+  color: var(--fg);
+  font-size: .92rem;
+  font-weight: 600;
+}
+#btn-home-shop:hover, #btn-home-codex:hover, #btn-home-help:hover, #btn-home-settings:hover {
+  border-color: rgba(255, 212, 121, .68);
+  box-shadow: 0 0 18px rgba(255, 190, 80, .22);
+}
+#btn-home-shop:focus-visible, #btn-home-codex:focus-visible,
+#btn-home-help:focus-visible, #btn-home-settings:focus-visible {
+  outline: 2px solid #fff6d8;
+  outline-offset: 2px;
+}
+#btn-home-shop:disabled, #btn-home-codex:disabled,
+#btn-home-help:disabled, #btn-home-settings:disabled {
+  opacity: 1;
+  filter: none;
+  color: var(--fg-faint);
+  border-style: dashed;
+  border-color: #2a3350;
+  background: #1a2135;
+}
+.home-actions, #boot .boot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(6px, .8vw, 12px);
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- 4.3 决策高亮引导（可用按钮里的首选：坚持本门 / 换门） ---------- */
+.decide-btn.is-primary {
+  border-color: rgba(255, 212, 121, .76);
+  background-image: linear-gradient(180deg, rgba(255, 212, 121, .2), rgba(16, 22, 38, 0));
+  box-shadow: 0 0 0 1px rgba(255, 212, 121, .42), 0 0 20px rgba(255, 180, 60, .22),
+              0 8px 20px rgba(0, 0, 0, .38);
+}
+.decide-btn.is-primary:not(:disabled) { animation: primaryPulse 2.6s ease-in-out infinite; }
+@keyframes primaryPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(255, 212, 121, .42), 0 0 18px rgba(255, 180, 60, .18),
+                0 8px 20px rgba(0, 0, 0, .38);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(255, 212, 121, .62), 0 0 30px rgba(255, 190, 80, .34),
+                0 10px 24px rgba(0, 0, 0, .42);
+  }
+}
+/* 高亮态必须与禁用/锁定态一眼可分：禁用是暗底 + 虚线 + --fg-faint，无发光 */
+.decide-btn.is-locked, .decide-btn[aria-disabled="true"]:not(:disabled) { animation: none; }
+
+/* --- 4.2 换门选门弹层 ---------------------------------------------- */
+.modal-switch {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: clamp(8px, 1.2vw, 16px);
+  margin: .3em 0 .5em;
+}
+.switch-card {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 84px;
+  padding: clamp(12px, 2.2vh, 24px) clamp(10px, 1.4vw, 18px);
+  border: 1px solid rgba(255, 212, 121, .35);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgba(255, 226, 160, .16), rgba(0, 0, 0, 0) 60%),
+    linear-gradient(180deg, var(--wood-1), var(--wood-2) 62%, var(--wood-3));
+  color: var(--fg);
+  font-size: clamp(.95rem, 1.25vw, 1.1rem);
+  font-weight: 700;
+  letter-spacing: .04em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), inset 0 -16px 26px rgba(0, 0, 0, .45),
+              0 10px 26px rgba(0, 0, 0, .45);
+}
+/* 门把手：装饰层，不参与布局 */
+.switch-card::after {
+  content: '';
+  position: absolute;
+  right: 9%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe9a9, #c9962f 72%);
+  box-shadow: 0 0 8px rgba(255, 200, 90, .5);
+  transform: translateY(-50%);
+}
+.switch-card:hover, .switch-card:focus-visible {
+  outline: none;
+  border-color: rgba(255, 212, 121, .82);
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), inset 0 -16px 26px rgba(0, 0, 0, .45),
+              0 0 24px rgba(255, 190, 80, .26), 0 14px 30px rgba(0, 0, 0, .5);
+}
+.switch-card:focus-visible { box-shadow: var(--ring), 0 0 24px rgba(255, 190, 80, .26); }
+.switch-none {
+  margin: .3em 0 .5em;
+  color: var(--fg-dim);
+  font-size: .92rem;
+  text-align: center;
+}
+
+/* --- 4.5 质疑提示条（浮层，不进布局；结算弹层里用 .is-inline） ------- */
+#hint-claim.hint-claim, .hint-claim {
+  position: fixed;
+  left: 50%;
+  bottom: clamp(92px, 17vh, 150px);
+  z-index: 23;
+  max-width: min(92vw, 620px);
+  margin: 0;
+  padding: .42em .95em;
+  border: 1px solid rgba(255, 212, 121, .45);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(30, 38, 68, .95), rgba(8, 11, 20, .97));
+  color: var(--fg);
+  font-size: clamp(.8rem, 1vw, .95rem);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .04);
+  pointer-events: none;
+}
+.hint-claim.is-inline {
+  position: static;
+  transform: none;
+  max-width: none;
+  margin: .35em 0 .55em;
+  padding: .45em .75em;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--gold-2);
+  background: rgba(255, 212, 121, .09);
+  color: var(--fg);
+  white-space: normal;
+  text-align: left;
+  box-shadow: none;
+  font-weight: 600;
+}
+
+/* --- 4.4 主持人开门文案（常驻一行，不开门时 hidden） ---------------- */
+#host-open, .host-open {
+  margin: .35em 0 0;
+  color: #ffe1a6;                     /* 比正文更暖的金，和旁白正文区分开 */
+  font-size: clamp(.78rem, .95vw, .92rem);
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, .6);
+}
+#host-open[hidden], .host-open[hidden] { display: none; }
+
+/* --- 矮视口 / 窄视口自适应 ----------------------------------------- */
+@media (max-height: 620px) {
+  #hint-claim.hint-claim { bottom: clamp(70px, 15vh, 112px); font-size: .78rem; padding: .3em .7em; }
+  #home-story p, .home-story-p { font-size: .78rem; line-height: 1.5; }
+  #home-coins .home-coins-num, .home-coins-num { font-size: 1.05rem; }
+  #difficulty [data-diff] { min-width: 4.4em; padding: .32em .7em; font-size: .84rem; }
+  .switch-card { min-height: 68px; padding: 10px 12px; }
+}
+@media (max-width: 620px) {
+  .modal-switch { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #difficulty [data-diff] { min-width: 4em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 装饰动画全停：金币跳动 / 高亮呼吸 */
+  #home-coins.is-bump, #home-coins.is-bump .home-coins-num,
+  .home-coins.is-bump, .home-coins.is-bump .home-coins-num,
+  .decide-btn.is-primary:not(:disabled) { animation: none !important; }
+  .switch-card:hover, .switch-card:focus-visible { transform: none; }
+}
+
+/* --- 首页实际 DOM（index.html:98-117 由 Lead 落地）的兜底样式 --------- */
+#boot.home {
+  gap: clamp(7px, 1.4vh, 16px);
+  text-align: center;
+}
+.home-title {
+  margin: 0;
+  font-size: clamp(1.55rem, 3.6vw, 2.6rem);
+  letter-spacing: .06em;
+  line-height: 1.15;
+}
+.home-sub {
+  margin: 0;
+  max-width: 40ch;
+  color: var(--fg-dim);
+  font-size: clamp(.82rem, 1.05vw, 1rem);
+  line-height: 1.5;
+}
+.home-wallet {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .35em;
+  margin: 0 auto;
+  color: var(--fg-dim);
+  font-size: .88rem;
+}
+.home-fine {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: .74rem;
+  letter-spacing: .02em;
+}
+.home-quick { font-size: .86rem; }
+/* 首页里剧情段落居左、整体居中，读起来更像开场白 */
+#boot.home #home-story, #boot.home .home-story { justify-items: stretch; }
+
+/* --- 契约 v6 §2.4：升级商店卡片 ------------------------------------ */
+.upgrade-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: clamp(8px, 1.1vw, 14px);
+  margin: .3em 0 .45em;
+}
+.upgrade-card {
+  display: flex;
+  flex-direction: column;
+  gap: .32em;
+  padding: clamp(9px, 1.4vh, 14px);
+  border: 1px solid rgba(255, 212, 121, .3);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(29, 37, 66, .92), rgba(12, 17, 32, .94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 6px 16px rgba(0, 0, 0, .3);
+  text-align: left;
+}
+.upgrade-card.is-maxed { border-color: rgba(134, 242, 193, .42); }
+.upgrade-card.is-poor { border-color: rgba(255, 107, 107, .45); }
+.upgrade-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5em;
+}
+.upgrade-name { color: var(--fg); font-size: .95rem; font-weight: 700; }
+.upgrade-level {
+  flex: none;
+  padding: .1em .5em;
+  border-radius: 999px;
+  background: rgba(255, 212, 121, .14);
+  color: var(--gold-2);
+  font-size: .76rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.upgrade-card.is-maxed .upgrade-level { background: rgba(134, 242, 193, .16); color: var(--green-lt); }
+.upgrade-desc { color: var(--fg-dim); font-size: .82rem; line-height: 1.5; }
+.upgrade-price {
+  display: inline-flex;
+  align-items: center;
+  gap: .3em;
+  margin-top: auto;
+  color: var(--gold-2);
+  font-size: .86rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.upgrade-card.is-poor .upgrade-price { color: #ff9b9b; }
+.upgrade-coin { width: 1.05em; height: 1.05em; flex: none; }
+.upgrade-buy {
+  width: 100%;
+  padding: .42em .8em;
+  border: 1px solid rgba(255, 212, 121, .55);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #ffe9a9, var(--gold-2) 55%, #d9a13d);
+  color: #241703;
+  font-size: .88rem;
+  font-weight: 700;
+}
+.upgrade-buy:hover:not(:disabled) { filter: brightness(1.06); }
+.upgrade-buy:focus-visible { outline: 2px solid #fff6d8; outline-offset: 2px; }
+.upgrade-buy:disabled {
+  opacity: 1;
+  filter: none;
+  color: var(--fg-faint);
+  border: 1px dashed #2a3350;
+  background: #1a2135;
+}
+.upgrade-empty { color: var(--fg-dim); font-size: .9rem; text-align: center; }
+
+@media (max-height: 620px) {
+  .upgrade-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .upgrade-desc { font-size: .78rem; }
+}
+@media (max-width: 620px) {
+  .upgrade-grid { grid-template-columns: 1fr; }
+}
+
+/* --- 短窗口：把「主持人开门」这一辅助行收起来，优先保住门卡不裁切 ---------
+ * 依据（详见报告里的六档静态推算）：#host-open 是 #narrator 里的第 4 个子元素，
+ * 会让 body 的 narrator 这一 auto 行长高约 23.7px（667×375）～28px（1920×1080），
+ * 而 1fr 的 #stage 行要等量让高：667×375 下门卡盒高从 101.8px 掉到 78.1px，
+ * 低于门面需要高 95.3px（门号铭牌占位也计入）⇒ 门卡底部信息被裁 17.2px。
+ * 520px 高度以下把该行 display:none（文本仍在 DOM 里、aria-live 仍可读，
+ * 只是不参与布局），门卡余量回到 +6.5px。契约六档（除 667×375）高度都 ≥657px，
+ * 不受影响；1920×1080 / 1280×720 这两个演示分辨率完全不变。 */
+@media (max-height: 520px) {
+  #host-open, .host-open { display: none; }
+}
+
+/* 极矮窗口（如 640×360 的窄边浏览器面板）：门卡整体收缩，而不是把底部标签裁掉。
+ * 这一档不在契约六档内，但静态推算显示原尺寸会溢出 8.5px，故补一条只会作用于
+ * max-height:400px 的收缩规则；图标/间距/内边距同时收，门号铭牌与名称仍在。 */
+@media (max-height: 400px) {
+  .door-icon { font-size: clamp(16px, 4.6vh, 40px); }
+  .door-face { padding: .3em .5em; gap: .12em; }
+}

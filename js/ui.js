@@ -142,6 +142,10 @@
   var portraitReady = false;     /* 竖屏提示 #portrait-hint 是否已自建（只插一次） */
   var tut = { active: false, index: 0, steps: [], phase: null, done: false, autoTried: false };
   var prefCache = null;          /* 最近一次 render 读到的偏好（只读缓存，用于音效/BGM/动画速度开关） */
+  var homeBound = false;         /* 契约 v6 §4.1：首页按钮的文档级委托是否已装（只装一次） */
+  var homeCoinsSig = null;       /* 首页金币数字签名：只在数值变化时播跳动反馈 */
+  var hintClaimReady = false;    /* 契约 v6 §4.5：质疑提示条 #hint-claim 是否已自建（只建一次） */
+  var hostOpenReady = false;     /* 契约 v6 §2.1：主持人开门文案行 #host-open 是否已自建 */
 
   /* ------------------------------------------------------------------ 工具 */
   function $(id) { return doc && doc.getElementById ? doc.getElementById(id) : null; }
@@ -472,6 +476,16 @@
     dom.boot = $('boot');
     dom.btnStart = $('btn-start');
     dom.btnStartNormal = $('btn-start-normal');
+    /* 契约 v6 §4.1 首页：剧情/金币/难度/四个入口按钮。这些 DOM 由 Lead 落在
+       index.html 里，可能晚于 UI.init 出现，所以 cacheHomeDom() 会在每次 render
+       时补查一次；全部允许为 null（缺失时相关渲染静默跳过）。 */
+    dom.homeStory = $('home-story');
+    dom.homeCoins = $('home-coins');
+    dom.difficulty = $('difficulty');
+    dom.btnHomeShop = $('btn-home-shop');
+    dom.btnHomeCodex = $('btn-home-codex');
+    dom.btnHomeHelp = $('btn-home-help');
+    dom.btnHomeSettings = $('btn-home-settings');
     dom.modal = $('modal');
     dom.modalPanel = doc.querySelector ? doc.querySelector('#modal .modal-panel') : null;
     dom.modalTitle = $('modal-title');
@@ -820,11 +834,11 @@
       case 'ROUND_INTRO': return '第 ' + round + ' 轮 —— 准备开始。';
       case 'NARRATOR': return '旁白正在说话。记住：它说的每一句都可能是谎。';
       case 'PICK': return '点击一扇门做出选择 · 长按 0.4 秒可窥视' + (state && state.peekUsed ? '（本轮已用过）' : '（每轮一次）');
-      case 'HOST_OPEN': return '主持人正在打开一扇门……';
+      case 'HOST_OPEN': return '主持人正在打开一扇空门……';
       case 'DECIDE':
-        return num(state && state.suspicion, 0) < suspicionCost()
-          ? '怀疑值不足，无法质疑旁白（需要 ' + suspicionCost() + ' 点）。'
-          : '选一个决策。质疑旁白会消耗 ' + suspicionCost() + ' 点怀疑值。';
+        /* 契约 v6 §4.3：决策阶段给出固定的高亮引导文案（可用按钮同时加 .is-primary）。
+           怀疑值不足的具体提示改由质疑按钮自己的 title / data-hint 表达（见 choiceState）。 */
+        return '轮到你决策：坚持本门 / 换门 / 质疑 / 加倍 / 收手';
       case 'REVEAL': return '开奖中 —— 决策区已锁定。';
       case 'SETTLE_ROUND': return '本轮结束：可以继续下一轮，也可以收手。';
       case 'CASHOUT': return '已收手 —— 结算页。';
@@ -1453,6 +1467,18 @@
         emit({ type: 'modal_choice', choice: 'buy:' + buy.getAttribute('data-item') });
         return;
       }
+      /* 契约 v6 §2.4：升级商店购买（走同一套委托，避免为每张卡单独绑事件） */
+      var up = closest(e.target, '.upgrade-buy');
+      if (up && D.modal && D.modal.contains(up)) {
+        if (up.disabled || up.getAttribute('aria-disabled') === 'true') {
+          sfx('click');
+          UI.toast(up.getAttribute('data-hint') || '现在买不了');
+          return;
+        }
+        sfx('buy');
+        emit({ type: 'modal_choice', choice: 'buy_upgrade:' + up.getAttribute('data-upgrade') });
+        return;
+      }
       /* 契约 v4 §4.5 G6：正文里的「复制种子」 */
       var seed = closest(e.target, '.seed-copy');
       if (seed && D.modal && D.modal.contains(seed)) {
@@ -1490,6 +1516,13 @@
         /* 契约 v4 §4.2：Esc 关闭弹层。必选流程（本轮结算/结算页/结束页）必须点按钮，
            避免玩家按 Esc 后停在无弹层的 SETTLE_ROUND / CASHOUT / GAME_OVER 里。 */
         if (D.modal && !D.modal.hidden) {
+          /* 契约 v6 §4.2：换门弹层不能只关弹层——那样 state.flags.switchPick 会一直停在 true，
+             玩家既换不了门也取消不掉。Esc 等同「算了，不换」。 */
+          if (modalKind === 'switch') {
+            emit({ type: 'cancel_switch' });
+            switchSettle();
+            return;
+          }
           var mustChoose = modalKind === 'round' || modalKind === 'cashout' || modalKind === 'gameover';
           if (modalActions === 0 || !mustChoose) UI.closeModal();
         }
@@ -1674,6 +1707,9 @@
       if (st.hint) { btn.title = st.hint; btn.setAttribute('data-hint', st.hint); }
       else { btn.removeAttribute('title'); btn.removeAttribute('data-hint'); }
       text(btn, (ch === 'double' && s.doubled) ? '已加倍' : (btn.__label || CHOICE_LABEL[ch] || ''));
+      /* 契约 v6 §4.3：决策高亮引导 —— 可用的「坚持本门 / 换门」优先高亮（金色描边），
+         禁用与被锁的按钮另有暗底虚线样式，两者的视觉对比必须明显。 */
+      toggle(btn, 'is-primary', !!st.on && (ch === 'stick' || ch === 'switch'));
     }
 
     /* 开始遮罩：仅 IDLE 显示 */
@@ -1681,6 +1717,9 @@
     if (D.boot) { D.boot.hidden = !idle; toggle(D.boot, 'is-open', idle); }
     if (D.btnStart) D.btnStart.disabled = !idle;
     if (D.btnStartNormal) D.btnStartNormal.disabled = !idle;
+
+    /* 契约 v6 §4.1：首页（剧情 / 金币余额 / 难度三选一 / 四个入口按钮） */
+    renderHome(s);
 
     /* 旁白：动画进行中不抢文本 */
     toggle(D.narrator, 'is-speaking', speaking);
@@ -1708,6 +1747,8 @@
     renderClaim(s);
     renderRehearsal(s);
     renderPersonaChip(s);     /* 契约 v4 §4.3：右下角人格徽标（只读 state，缺失即自建） */
+    renderHintClaim(s);       /* 契约 v6 §4.5：质疑旁白后的提示条（Game.hintText()，缺失即自建） */
+    renderHostOpen(s);        /* 契约 v6 §2.1：主持人开门文案常驻在页面上（qa V5.12） */
     syncPortrait(s);          /* 契约 v4 §4.7：矮视口竖屏提示（纯浮层） */
     maybeAutoTutorial();      /* 契约 v4 §4.1：未引导过就自动开引导（引擎未就绪则不打扰） */
     autoDoneTutorial(s);      /* 契约 v4 §4.1：局终相位自动收尾，防卡死 */
@@ -2281,6 +2322,418 @@
     }
   }
 
+  /* ------------------------------------------------- 契约 v6 §4.1：首页 */
+  /* 首页入口按钮 → 引擎动作。契约冻结的是「作用」，type 字符串以引擎实现为准；
+     集中成一张表：引擎改名时只改这一行。未知 type 引擎只 _warn（game.js:499），不会崩。 */
+  var HOME_ACT = {
+    shop: { type: 'upgrade_shop' },                      /* 升级商店 = Game.openUpgrade()（game.js:865） */
+    codex: { type: 'modal_choice', choice: 'codex' },    /* 图鉴：引擎已支持该 choice */
+    help: { type: 'open_help' },
+    settings: { type: 'open_settings' }
+  };
+  var HOME_BTN = {
+    'btn-home-shop': 'shop',
+    'btn-home-codex': 'codex',
+    'btn-home-help': 'help',
+    'btn-home-settings': 'settings'
+  };
+  var DIFF_ORDER = ['normal', 'hard', 'hell'];
+  var DIFF_LABEL = { normal: '普通', hard: '困难', hell: '地狱' };
+
+  /** 沿 parentNode 往上找带这些 id 的祖先。
+      不用 closest：垫片的选择器不支持 `>` 子组合器，自己走最稳。 */
+  function ancestorId(node, ids) {
+    var n = node;
+    while (n && n !== doc) {
+      if (n.getAttribute) {
+        var id = str(n.getAttribute('id'));
+        if (id && ids[id]) return id;
+      }
+      n = n.parentNode;
+    }
+    return '';
+  }
+  function withinId(node, id) {
+    var n = node;
+    while (n && n !== doc) {
+      if (n.getAttribute && str(n.getAttribute('id')) === id) return true;
+      n = n.parentNode;
+    }
+    return false;
+  }
+  /** 向上找第一个带某 data-* 属性的祖先（同上：避免依赖属性存在性选择器） */
+  function attrAncestor(node, attr) {
+    var n = node;
+    while (n && n !== doc) {
+      if (n.getAttribute && n.getAttribute(attr) != null) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+
+  /** 首页按钮与难度选择用**委托**装一次：Lead 的首页 DOM 可能晚于 UI.init 出现，
+      直接 on(button, …) 会在 DOM 还没落时永久失联。
+      挂 <body> 而不是 document：浏览器里 body 覆盖全部可见内容，
+      而 Node DOM 垫片的 `fire()` 只沿 parentNode 冒泡到解析树的顶层（body），
+      document 上的监听器收不到冒泡事件 —— 挂 body 两边都能生效。 */
+  function bindHomeDelegation() {
+    var D = d();
+    if (homeBound || !doc) return;
+    homeBound = true;
+    var host = D.body || doc;
+    on(host, 'click', function (ev) {
+      var hit = ancestorId(ev.target, HOME_BTN);
+      if (hit) {
+        var act = HOME_ACT[HOME_BTN[hit]];      /* 先过按钮 id → 语义键，再取动作 */
+        if (!act) return;
+        if (ev.preventDefault) ev.preventDefault();
+        sfx('click');
+        emit(act);
+        return;
+      }
+      var dEl = attrAncestor(ev.target, 'data-diff');
+      if (dEl && (withinId(dEl, 'difficulty') || withinId(dEl, 'boot'))) {
+        var v = str(dEl.getAttribute('data-diff'));
+        if (!v) return;
+        if (ev.preventDefault) ev.preventDefault();
+        sfx('click');
+        emit({ type: 'set_difficulty', value: v });
+      }
+    });
+  }
+
+  function cacheHomeDom() {
+    var D = d();
+    if (!D.homeStory) D.homeStory = $('home-story');
+    if (!D.homeCoins) D.homeCoins = $('home-coins');
+    if (!D.difficulty) D.difficulty = $('difficulty');
+    if (!D.btnHomeShop) D.btnHomeShop = $('btn-home-shop');
+    if (!D.btnHomeCodex) D.btnHomeCodex = $('btn-home-codex');
+    if (!D.btnHomeHelp) D.btnHomeHelp = $('btn-home-help');
+    if (!D.btnHomeSettings) D.btnHomeSettings = $('btn-home-settings');
+    return D;
+  }
+
+  /** 契约 v6 §4.4：全局改名「三扇门」→「命运之门」。只在文案还是旧名时改，
+      不去覆盖别人已经写好的新标题。 */
+  function renderBrand(D) {
+    var targets = [];
+    if (doc && doc.querySelector) {
+      var bn = doc.querySelector('.brand-name');
+      if (bn) targets.push(bn);
+    }
+    if (D && D.boot && D.boot.querySelector) {
+      var bt = D.boot.querySelector('.boot-title');
+      if (bt) targets.push(bt);
+    }
+    var ht = $('home-title') || $('boot-title');
+    if (ht) targets.push(ht);
+    for (var i = 0; i < targets.length; i++) {
+      var el = targets[i];
+      if (!el || !el.textContent) continue;
+      if (str(el.textContent) !== '三扇门') continue;   /* 已经是新名字就不动 */
+      text(el, '命运之门');
+    }
+  }
+
+  /** 首页剧情：优先用引擎填好的内容；为空时用 data/config.json 的 story 拼 3 段 <p>。 */
+  function renderHomeStory(D) {
+    if (!D.homeStory || !D.homeStory.appendChild) return;
+    if (D.homeStory.firstChild) return;
+    var cfg = null;
+    try { cfg = (root.GameData && root.GameData.config) || null; } catch (e) { cfg = null; }
+    var story = cfg && cfg.story;
+    if (!story) {
+      /* 兜底：引擎的 Game.homeSpec().story 是拼好的「<p>…</p><p>…</p>」串。 */
+      var spec = gameCall('homeSpec');
+      var h = spec && spec.story ? str(spec.story) : '';
+      if (h && D.homeStory.innerHTML !== undefined) D.homeStory.innerHTML = h;
+      return;
+    }
+    /* 不能用 `story instanceof Array`：data 由 vm 沙箱加载，跨 realm 时
+       instanceof 会失败，整段剧情会被当成一个字符串拼成一句（实测 bug）。 */
+    var isArr = Object.prototype.toString.call(story) === '[object Array]';
+    var arr = isArr ? story : [story];
+    for (var i = 0; i < arr.length; i++) {
+      var seg = arr[i];
+      var line = str(seg && seg.text ? seg.text : seg);
+      if (!line) continue;
+      var p = doc.createElement('p');
+      p.className = 'home-story-p';
+      p.textContent = line;
+      D.homeStory.appendChild(p);
+    }
+  }
+
+  /** 首页金币余额 = 跨局钱包（契约 §2.4）；引擎还没有 wallet() 时退回本局金币。 */
+  function homeWallet(state) {
+    var w = gameCall('wallet');
+    if (w === null || w === undefined) return num(state && state.coins, 0);
+    return num(w, 0);
+  }
+  function renderHomeCoins(D, state) {
+    if (!D.homeCoins) return;
+    var w = homeWallet(state);
+    var host = D.homeCoins;
+    var target = host;
+    if (host.querySelector) {
+      var inner = host.querySelector('.home-coins-num');
+      if (inner) target = inner;
+    }
+    text(target, String(w));
+    if (host.setAttribute) host.setAttribute('data-coins', String(w));
+    if (homeCoinsSig !== null && homeCoinsSig !== w) {
+      toggle(host, 'is-bump', false);
+      if (host.offsetWidth !== undefined) void host.offsetWidth;   /* 强制重排以重播动画 */
+      toggle(host, 'is-bump', true);
+      later(600, function () { toggle(host, 'is-bump', false); });
+    }
+    homeCoinsSig = w;
+  }
+
+  function diffNow() {
+    return str(gameCall('difficulty')) || 'normal';
+  }
+  function difficultyNodes(D) {
+    var out = [];
+    var i;
+    var host = D && D.difficulty;
+    var list = (host && host.querySelectorAll) ? host.querySelectorAll('[data-diff]') : null;
+    if (list && list.length) { for (i = 0; i < list.length; i++) out.push(list[i]); }
+    if (!out.length && doc && doc.querySelector) {
+      for (i = 0; i < DIFF_ORDER.length; i++) {
+        var el = doc.querySelector('[data-diff="' + DIFF_ORDER[i] + '"]');
+        if (el) out.push(el);
+      }
+    }
+    return out;
+  }
+  function renderDifficulty(D, state) {
+    var cur = diffNow();
+    var nodes = difficultyNodes(D);
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var val = str(el.getAttribute('data-diff'));
+      var on = (val === cur);
+      toggle(el, 'is-active', on);
+      if (el.setAttribute) {
+        el.setAttribute('aria-pressed', on ? 'true' : 'false');
+        if (DIFF_LABEL[val] && !str(el.getAttribute('data-label'))) el.setAttribute('data-label', DIFF_LABEL[val]);
+      }
+    }
+    if (D && D.difficulty && D.difficulty.setAttribute) D.difficulty.setAttribute('data-current', cur);
+  }
+
+  /** 契约 v6 §4.1：首页整体渲染（剧情 / 金币 / 难度选中态 / 改名兜底 / 委托安装）。
+      全部只读 state 与引擎只读 API，DOM 缺失时静默跳过。 */
+  function renderHome(state) {
+    var D = cacheHomeDom();
+    bindHomeDelegation();
+    renderBrand(D);
+    renderHomeStory(D);
+    renderHomeCoins(D, state);
+    renderDifficulty(D, state);
+  }
+
+  /* --------------------------------------------- 契约 v6 §4.5：质疑提示条 */
+  /** 质疑提示文本：优先 Game.hintText()（契约 §2.2 保证质疑后一定非空），
+      引擎未实现时退回 state.lastHint.text。 */
+  function hintClaimText(state) {
+    var t = str(gameCall('hintText'));
+    if (!t && state && state.lastHint) t = str(state.lastHint.text);
+    return t;
+  }
+  function ensureHintClaim() {
+    var D = d();
+    if (D.hintClaim) return D.hintClaim;
+    if (hintClaimReady || !doc || !doc.createElement || !D.body) return null;
+    var el = doc.createElement('p');
+    el.setAttribute('id', 'hint-claim');
+    el.setAttribute('class', 'hint-claim');
+    el.setAttribute('aria-live', 'polite');   /* 契约 §4.5：不能只闪 toast，要有常驻文字 */
+    D.body.appendChild(el);
+    D.hintClaim = el;
+    hintClaimReady = true;
+    return el;
+  }
+  /** 决策区的提示条（纯浮层，不参与布局）。 */
+  function renderHintClaim(state) {
+    var el = ensureHintClaim();
+    if (!el) return;
+    var t = hintClaimText(state);
+    var show = (str(state && state.phase) === 'DECIDE') && !!t;
+    el.hidden = !show;
+    if (show) text(el, t);
+  }
+  /** 结算/死亡弹层里的同一条提示（契约 §4.5「决策区/结算区」）。 */
+  function hintClaimRow(spec) {
+    var kind = str(spec && spec.kind);
+    if (kind !== 'round' && kind !== 'cashout' && kind !== 'gameover') return null;
+    var t = hintClaimText(liveState());
+    if (!t || !doc || !doc.createElement) return null;
+    var p = doc.createElement('p');
+    p.setAttribute('class', 'hint-claim is-inline');
+    p.textContent = t;
+    return p;
+  }
+
+  /* ----------------------------------- 契约 v6 §2.1：主持人开门文案进 DOM */
+  /** 主持人只开空门，文案统一走 config.hostOpenLabel（现为「一扇空门」）。 */
+  function hostOpenLabel() {
+    var cfg = (typeof GameData !== 'undefined' && GameData) ? GameData.config : null;
+    var label = cfg ? str(cfg.hostOpenLabel) : '';
+    return label || '一扇空门';
+  }
+  /** 「主持人打开了一扇空门（2 号门）」——qa 的 V5.12 用 /主持人打开了[^。]{0,12}空门/ 匹配。 */
+  function hostOpenMsg(slot) {
+    var n = Number(slot);
+    var tail = (isFinite(n) && n >= 0) ? ('（' + (n + 1) + ' 号门）') : '';
+    return '主持人打开了' + hostOpenLabel() + tail;
+  }
+  /** 常驻的开门说明行：挂在旁白块里（只建一次），让这句话在开完门后留在页面上。 */
+  function ensureHostOpenLine() {
+    var D = d();
+    if (D.hostOpen) return D.hostOpen;
+    if (hostOpenReady || !doc || !doc.createElement) return null;
+    var host = D.narrator || D.body;
+    if (!host || !host.appendChild) return null;
+    var el = doc.createElement('p');
+    el.setAttribute('id', 'host-open');
+    el.setAttribute('class', 'host-open');
+    el.setAttribute('aria-live', 'polite');
+    host.appendChild(el);
+    D.hostOpen = el;
+    hostOpenReady = true;
+    return el;
+  }
+  function setHostOpenLine(msg) {
+    var el = ensureHostOpenLine();
+    if (!el) return;
+    text(el, str(msg));
+    el.hidden = !msg;
+  }
+  /** 只在「主持人开门中 → 决策」这段时间可见；新一轮开始清空。 */
+  function renderHostOpen(state) {
+    var el = ensureHostOpenLine();
+    if (!el) return;
+    var phase = str(state && state.phase);
+    if (phase === 'IDLE' || phase === 'ROUND_INTRO') { text(el, ''); el.hidden = true; return; }
+    var keep = (phase === 'HOST_OPEN' || phase === 'DECIDE');
+    el.hidden = !keep || !str(el.textContent);
+  }
+
+  /* --------------------------------------- 契约 v6 §4.2：换门选门弹层 */
+  /** 取候选门序号。不能用 num()：它对非有限值返回 `dflt || 0`，会把非法 slot 变成 0 号门。 */
+  function switchSlotOf(a) {
+    var raw = a ? a.slot : null;
+    var slot = Number(raw);
+    if (raw === null || raw === undefined || raw === '' || !isFinite(slot)) return -1;
+    return slot;
+  }
+  /** 把 spec.actions 里的候选门渲染成门卡按钮（每张自带点击 → choose_switch）。 */
+  function renderSwitch(spec) {
+    var D = d();
+    if (!D.modalBody || !D.modalBody.appendChild || !doc || !doc.createElement) return 0;
+    var acts = (spec && spec.actions) || [];
+    var wrap = doc.createElement('div');
+    wrap.setAttribute('class', 'modal-switch');
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', '可换的门');
+    var n = 0;
+    var cancelLabel = '取消';
+    for (var i = 0; i < acts.length; i++) {
+      var a = acts[i] || {};
+      var slot = switchSlotOf(a);
+      if (slot < 0) {
+        /* 引擎会把「算了，不换」也放进 actions（choice:'cancel_switch'，没有 slot）：
+           它的文案比我的默认「取消」更贴合语气，借来用在自己的取消按钮上。 */
+        if (str(a.choice) === 'cancel_switch' || !!(a.label || a.text)) cancelLabel = str(a.label || a.text) || cancelLabel;
+        continue;
+      }
+      var card = doc.createElement('button');
+      card.type = 'button';
+      card.setAttribute('class', 'switch-card');
+      card.setAttribute('data-slot', String(slot));
+      var label = str(a.label || a.text) || ((slot + 1) + ' 号门');
+      card.textContent = label;
+      card.setAttribute('aria-label', '换到 ' + label);
+      on(card, 'click', (function (sl) {
+        return function (ev) {
+          if (ev && ev.preventDefault) ev.preventDefault();
+          sfx('click');
+          emit({ type: 'choose_switch', slot: sl });
+          switchSettle();
+        };
+      })(slot));
+      wrap.appendChild(card);
+      n++;
+    }
+    D.modalBody.appendChild(wrap);
+    return { cards: n, cancelLabel: cancelLabel };
+  }
+  /** 换门弹层收尾：emit 之后引擎若没关弹层（取消 / 已换完），兜底关掉，避免弹层卡住。 */
+  function switchSettle() {
+    later(0, function () {
+      var D = d();
+      if (!D.modal || D.modal.hidden) return;
+      if (str(modalKind) !== 'switch') return;
+      var s = liveState();
+      var still = !!(s && s.flags && s.flags.switchPick);
+      if (!still || str(s && s.phase) !== 'DECIDE') UI.closeModal();
+    });
+  }
+
+  /* ----------------------------------- 契约 v6 §2.4：升级商店弹层（kind:'upgrade'） */
+  /** 引擎 openUpgrade() 的 spec：{kind:'upgrade', coins, items:[{id,name,desc,cost,
+      maxLevel,level,effect,maxed,affordable,wallet}], actions:[buy_upgrade:<id>…, 关闭]}。
+      购买按钮由本函数渲染成卡片；动作仍走 modal_choice 'buy_upgrade:<id>'，
+      引擎成功后自己重开弹层刷新余额与等级（game.js:1919-1923）。 */
+  function renderUpgrade(spec) {
+    var D = d();
+    if (!D.modalBody || !D.modalBody.appendChild || !doc || !doc.createElement) return 0;
+    var items = (spec && spec.items) || [];
+    var coins = num(spec && spec.coins, 0);
+    var grid = doc.createElement('div');
+    grid.setAttribute('class', 'upgrade-grid');
+    grid.setAttribute('id', 'upgrade-grid');
+    var n = 0;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      var id = str(it.id);
+      if (!id) continue;
+      var maxed = it.maxed === true;
+      var cost = num(it.cost, 0);
+      var level = num(it.level, 0);
+      var maxLevel = num(it.maxLevel, 1);
+      /* 置灰优先信引擎的 affordable（它考虑折扣等规则）；字段缺失才用钱包自己算。 */
+      var poor = !maxed && (it.affordable === false || (it.affordable === undefined && coins < cost));
+      var card = doc.createElement('div');
+      card.setAttribute('class', 'upgrade-card' + (maxed ? ' is-maxed' : (poor ? ' is-poor' : '')));
+      card.setAttribute('data-upgrade', id);
+      card.innerHTML =
+        '<div class="upgrade-head">' +
+          '<span class="upgrade-name">' + esc(it.name || id) + '</span>' +
+          '<span class="upgrade-level">' + (maxed ? '满级' : ('Lv.' + level + '/' + maxLevel)) + '</span>' +
+        '</div>' +
+        '<div class="upgrade-desc">' + esc(it.desc || '') + '</div>' +
+        '<div class="upgrade-price">' + iconUse('coins', 'upgrade-coin') + '<span>' + (maxed ? '已满级' : (cost + ' 金币')) + '</span></div>' +
+        '<button type="button" class="upgrade-buy" data-upgrade="' + esc(id) + '"' +
+          (maxed || poor ? ' disabled aria-disabled="true"' : '') +
+          ' data-hint="' + esc(maxed ? '已经满级了' : (poor ? ('金币不够：需要 ' + cost + '，钱包 ' + coins) : ('花 ' + cost + ' 金币升到 Lv.' + (level + 1)))) + '"' +
+          '>' + (maxed ? '满级' : '升级') + '</button>';
+      grid.appendChild(card);
+      n++;
+    }
+    D.modalBody.appendChild(grid);
+    if (!n) {
+      var empty = doc.createElement('div');
+      empty.className = 'upgrade-empty';
+      empty.textContent = '暂时没有可以升级的项目。';
+      D.modalBody.appendChild(empty);
+    }
+    return n;
+  }
+
   /* --------------------------------------------------------------- 弹层 */
   function setModalBody(body) {
     var el = d().modalBody;
@@ -2324,32 +2777,74 @@
       if (D.modalBody.insertBefore && D.modalBody.firstChild) D.modalBody.insertBefore(srow, D.modalBody.firstChild);
       else D.modalBody.appendChild(srow);
     }
+    /* 契约 v6 §4.5：结算/死亡弹层里的质疑提示行（决策区的提示条见 renderHintClaim） */
+    var hclaim = hintClaimRow(spec);
+    if (hclaim && D.modalBody && D.modalBody.appendChild) {
+      if (D.modalBody.insertBefore && D.modalBody.firstChild) D.modalBody.insertBefore(hclaim, D.modalBody.firstChild);
+      else D.modalBody.appendChild(hclaim);
+    }
     clear(D.modalActions);
     var acts = (spec.actions && spec.actions.length) ? spec.actions : [];
-    modalActions = acts.length;
-    for (var i = 0; i < acts.length; i++) {
-      (function (a) {
-        a = a || {};
-        var btn = doc.createElement('button');
-        btn.type = 'button';
-        btn.className = 'modal-btn' + (a.primary ? ' primary' : '');
-        btn.textContent = str(a.label || a.text || a.choice);
-        btn.setAttribute('data-choice', str(a.choice));
-        if (a.hint) btn.title = str(a.hint);
-        on(btn, 'click', function (ev) {
-          if (ev.preventDefault) ev.preventDefault();
-          activateModalChoice(btn);       /* 与键盘空格共用（G2） */
-        });
-        D.modalActions.appendChild(btn);
-      })(acts[i]);
+    /* 契约 v6 §4.2：换门选门弹层。候选门是「门卡按钮」，不是普通动作按钮
+       （通用循环只认 label/choice，会把 {slot} 渲染成空白按钮），所以走专用分支。 */
+    var isSwitch = (kindV4 === 'switch');
+    if (isSwitch) {
+      var sw = renderSwitch(spec);
+      modalActions = 1;                              /* 动作区只有「取消」一个按钮 */
+      var cancel = doc.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'modal-btn';
+      cancel.textContent = (sw && sw.cancelLabel) || '取消';
+      cancel.setAttribute('data-choice', 'cancel_switch');
+      on(cancel, 'click', function (ev) {
+        if (ev && ev.preventDefault) ev.preventDefault();
+        sfx('click');
+        emit({ type: 'cancel_switch' });
+        switchSettle();
+      });
+      D.modalActions.appendChild(cancel);
+      if (!sw || !sw.cards) {
+        var none = doc.createElement('p');
+        none.className = 'switch-none';
+        none.textContent = '现在没有可以换的门。';
+        D.modalBody.appendChild(none);
+      }
+    } else {
+      /* 契约 v6 §2.4：升级商店的购买按钮由 renderUpgrade 渲染成卡片，
+         动作区只保留「关闭」，免得同一个动作出现两遍。 */
+      var list = acts;
+      if (kindV4 === 'upgrade') {
+        list = [];
+        for (var ai = 0; ai < acts.length; ai++) {
+          if (str(acts[ai] && acts[ai].choice).indexOf('buy_upgrade:') !== 0) list.push(acts[ai]);
+        }
+      }
+      modalActions = list.length;
+      for (var i = 0; i < list.length; i++) {
+        (function (a) {
+          a = a || {};
+          var btn = doc.createElement('button');
+          btn.type = 'button';
+          btn.className = 'modal-btn' + (a.primary ? ' primary' : '');
+          btn.textContent = str(a.label || a.text || a.choice);
+          btn.setAttribute('data-choice', str(a.choice));
+          if (a.hint) btn.title = str(a.hint);
+          on(btn, 'click', function (ev) {
+            if (ev.preventDefault) ev.preventDefault();
+            activateModalChoice(btn);       /* 与键盘空格共用（G2） */
+          });
+          D.modalActions.appendChild(btn);
+        })(list[i]);
+      }
     }
     var kind = str(spec.kind);
     if (kind === 'shop') renderShop(spec);          /* 契约 §3.3：商店弹层自己渲染 #shop-grid */
+    if (kind === 'upgrade') renderUpgrade(spec);    /* 契约 v6 §2.4：升级商店卡片 */
     D.modal.className = 'modal kind-' + str(spec.kind || 'info');
     D.modal.hidden = false;
     toggle(D.modal, 'is-open', true);
     toggle(D.body, 'has-modal', true);
-    sfx(kind === 'gameover' ? 'lose' : (kind === 'cashout' ? 'win' : (kind === 'shop' ? 'open' : 'click')));
+    sfx(kind === 'gameover' ? 'lose' : (kind === 'cashout' ? 'win' : ((kind === 'shop' || kind === 'switch') ? 'open' : 'click')));
     var first = D.modalActions.querySelector ? D.modalActions.querySelector('button') : null;
     if (first && first.focus) { try { first.focus(); } catch (e) { /* noop */ } }
   };
@@ -2383,6 +2878,18 @@
   }
 
   /** 旁白逐字播放；返回 Promise<void>。flags.skipAnim 为真时一步到位。 */
+  /** 旁白节奏预算（毫秒）：引擎在 config.timings.narratorMs 里给了这句的舞台时间
+      （默认 2000ms，qa 的用例会把它调小来加速），但每字保底 55ms 可读下限，
+      所以 61 字的长句仍有 ≈3.4s，不会退回旧实现「一闪而过」。
+      2026-10-25：原实现按字数自由延长（28 字 ≈4.3s），使 start→PICK 达 5.8s，
+      qa 的 tests/home.js V2.5 用 4000ms 等待会误判 —— 现按引擎节奏收敛。 */
+  function narratorBudget(len) {
+    var cfg = (typeof GameData !== 'undefined' && GameData) ? GameData.config : null;
+    var ms = (cfg && cfg.timings) ? num(cfg.timings.narratorMs, 0) : 0;
+    if (!(ms > 0)) ms = 2000;
+    return Math.max(scaled(ms), num(len, 0) * 55);
+  }
+
   UI.playNarratorLine = function (line, index) {
     var el = d().narratorText;
     var full = truncateLine(lineText(line));
@@ -2401,11 +2908,16 @@
     if (!el) { a.finish(); return a.promise; }
 
     var len = full.length;
-    /* 按阅读速度定速：默认 9 字/秒（慢 6 / 快 13），句末至少停留 1.2s，
-       让 28 字的长句有约 4.3s 可读，而不是旧实现的 1.3s。 */
-    var interval = len ? Math.max(18, Math.round(1000 / (narratorCps() * speedScale()))) : 0;
+    var budget = narratorBudget(len);
+    /* 逐字速度：默认按阅读速度（标准 9 字/秒），但打字不能吃掉整段预算 ——
+       超出预算 72% 时提速，把剩下的时间留给句末停顿。 */
+    var interval = len ? Math.max(14, Math.round(1000 / (narratorCps() * speedScale()))) : 0;
     var typeMs = len * interval;
-    var hold = scaled(1200);
+    if (typeMs > budget * 0.72) {
+      interval = Math.max(10, Math.floor((budget * 0.72) / Math.max(1, len)));
+      typeMs = len * interval;
+    }
+    var hold = Math.max(150, budget - typeMs);
 
     (function type(i) {
       if (a.finished) return;
@@ -2426,7 +2938,10 @@
     var s = num(p.slot, 0);
     var iv = itemView(p.itemId, p.item);
     var el = doorEl(s);
-    var msg = '主持人打开了 ' + (s + 1) + ' 号门：' + iv.name;
+    /* 契约 v6 §2.1/§4.4：文案固定「主持人打开了…空门」（config.hostOpenLabel），
+       并且要把这句话留在页面上（横幅会淡出，所以另挂一条 #host-open）。 */
+    var msg = hostOpenMsg(s);
+    setHostOpenLine(msg);
 
     function applyFinal() {
       if (el) {
