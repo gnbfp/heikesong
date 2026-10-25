@@ -1,7 +1,7 @@
 /* ============================================================================
  * js/data.js —— 内容层生成产物（《三扇门：别信旁白》阶段 2）
  * 本文件由 tools/build-data.js 生成，勿手改。
- * 数据来源：data/items.json、data/shop.json、data/personas.json、data/achievements.json、data/config.json、data/narrator.json、data/seed_demo.json
+ * 数据来源：data/items.json、data/shop.json、data/upgrades.json、data/personas.json、data/achievements.json、data/config.json、data/narrator.json、data/seed_demo.json
  * 改数值请改 data/*.json，然后重新执行：node tools/build-data.js
  * 零构建：经典脚本挂 globalThis.GameData，file:// 双击可用，浏览器侧禁止 fetch JSON。
  * ========================================================================== */
@@ -9,12 +9,13 @@
   'use strict';
 
   var meta = {
-    "name": "三扇门：别信旁白（stage2）",
-    "stage": "stage2",
-    "version": "1.0.0",
+    "name": "命运之门（stage6）",
+    "stage": "stage6",
+    "version": "6.0.0",
     "generatedFrom": [
       "data/items.json",
       "data/shop.json",
+      "data/upgrades.json",
       "data/personas.json",
       "data/achievements.json",
       "data/config.json",
@@ -27,11 +28,14 @@
     "itemAliasCount": 1,
     "narratorCount": 72,
     "claimableCount": 13,
-    "endingLineCount": 16,
-    "endingCount": 8,
+    "endingLineCount": 19,
+    "endingCount": 9,
     "personaCount": 3,
     "achievementCount": 10,
-    "settleCount": 16
+    "settleCount": 16,
+    "upgradeCount": 6,
+    "hintCount": 10,
+    "deathCount": 4
   };
 
   var itemList = [
@@ -57,6 +61,7 @@
       "weight": 22,
       "minRound": 1,
       "lateWeight": 22,
+      "minDoors": 4,
       "kind": "prize",
       "desc": "金币 +30、怀疑值 +1。甜头也上头。",
       "icon": "小"
@@ -67,9 +72,9 @@
       "coins": 0,
       "patience": 0,
       "suspicion": 1,
-      "weight": 20,
+      "weight": 40,
       "minRound": 1,
-      "lateWeight": 20,
+      "lateWeight": 40,
       "kind": "no-prize",
       "desc": "空手而归，怀疑值 +1。连回声都没有。",
       "icon": "空"
@@ -209,14 +214,121 @@
   }
 
   var config = {
-    "title": "三扇门：别信旁白",
-    "stage": "stage2",
-    "version": "1.0.0",
+    "title": "命运之门",
+    "tagline": "别信旁白",
+    "stage": "stage6",
+    "version": "6.0.0",
+    "hostOpenLabel": "一扇空门",
     "initial": {
       "coins": 100,
       "suspicion": 2,
       "patience": 3
     },
+    "difficulty": {
+      "default": "normal",
+      "order": [
+        "normal",
+        "hard",
+        "hell"
+      ],
+      "tiers": {
+        "normal": {
+          "id": "normal",
+          "name": "普通",
+          "desc": "旁白偶尔误导，容错最多。",
+          "lieBase": 0.35,
+          "coins": 100,
+          "patience": 3,
+          "suspicion": 2,
+          "rewardMultiplier": 1,
+          "initial": {
+            "coins": 100,
+            "patience": 3,
+            "suspicion": 2
+          }
+        },
+        "hard": {
+          "id": "hard",
+          "name": "困难",
+          "desc": "旁白一半在误导，奖励 ×1.5。",
+          "lieBase": 0.5,
+          "coins": 80,
+          "patience": 2,
+          "suspicion": 1,
+          "rewardMultiplier": 1.5,
+          "initial": {
+            "coins": 80,
+            "patience": 2,
+            "suspicion": 1
+          }
+        },
+        "hell": {
+          "id": "hell",
+          "name": "地狱",
+          "desc": "旁白张口就来，一次走错就死，奖励 ×2。",
+          "lieBase": 0.65,
+          "coins": 60,
+          "patience": 1,
+          "suspicion": 0,
+          "rewardMultiplier": 2,
+          "initial": {
+            "coins": 60,
+            "patience": 1,
+            "suspicion": 0
+          }
+        }
+      },
+      "normal": {
+        "id": "normal",
+        "name": "普通",
+        "desc": "旁白偶尔误导，容错最多。",
+        "lieBase": 0.35,
+        "coins": 100,
+        "patience": 3,
+        "suspicion": 2,
+        "rewardMultiplier": 1,
+        "initial": {
+          "coins": 100,
+          "patience": 3,
+          "suspicion": 2
+        }
+      },
+      "hard": {
+        "id": "hard",
+        "name": "困难",
+        "desc": "旁白一半在误导，奖励 ×1.5。",
+        "lieBase": 0.5,
+        "coins": 80,
+        "patience": 2,
+        "suspicion": 1,
+        "rewardMultiplier": 1.5,
+        "initial": {
+          "coins": 80,
+          "patience": 2,
+          "suspicion": 1
+        }
+      },
+      "hell": {
+        "id": "hell",
+        "name": "地狱",
+        "desc": "旁白张口就来，一次走错就死，奖励 ×2。",
+        "lieBase": 0.65,
+        "coins": 60,
+        "patience": 1,
+        "suspicion": 0,
+        "rewardMultiplier": 2,
+        "initial": {
+          "coins": 60,
+          "patience": 1,
+          "suspicion": 0
+        }
+      }
+    },
+    "story": [
+      "你欠了一笔还不上的债，被人推上这张赌桌。",
+      "门后是奖赏或陷阱，而那个旁白会一直对你说话——他多半在骗你。",
+      "活下来，带着金币走出去；耐心耗尽，你就死在这里。"
+    ],
     "suspicion": {
       "cost": 1,
       "winCoins": 20,
@@ -235,7 +347,8 @@
         "DECIDE",
         "SETTLE_ROUND"
       ],
-      "spentStat": true
+      "spentStat": true,
+      "upgradeDiscountStep": 0.1
     },
     "personalities": {
       "default": "sarcastic",
@@ -296,6 +409,12 @@
       "desc": "该走就走，这是赌桌上最贵的一课。"
     },
     "endings": {
+      "death": {
+        "priority": 110,
+        "title": "你死了",
+        "desc": "耐心见底，游戏结束。金币留在了桌上，人没能走出去。",
+        "lineKind": "death"
+      },
       "all_in": {
         "priority": 100,
         "title": "全识破",
@@ -438,7 +557,7 @@
   };
 
   var narrator = {
-    "source": "《三扇门：别信旁白》开工清单 · 阶段 2/4 旁白语料 + 设计契约 v3 §1（claim 线索）/§3（语录扩容）/§4.1（endings 赛后点评）",
+    "source": "《三扇门：别信旁白》开工清单 · 阶段 2/4 旁白语料 + 设计契约 v3 §1（claim 线索）/§3（语录扩容）/§4.1（endings 赛后点评）+ 设计契约 v4 §3（人格/结算点评）+ 设计契约 v6 §3.4（hints 质疑提示 / death 死亡台词）",
     "pairs": {
       "truth": [
         [
@@ -970,6 +1089,23 @@
       }
     ],
     "endings": {
+      "death": [
+        {
+          "id": "e_death_1",
+          "text": "你倒在了这张桌子上，金币归我。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_death_2",
+          "text": "下一次，别把耐心当运气用。",
+          "kind": "ending"
+        },
+        {
+          "id": "e_death_3",
+          "text": "记住这场死法，下次活久一点。",
+          "kind": "ending"
+        }
+      ],
       "ending_all_in": [
         {
           "id": "e_all_in_1",
@@ -1220,7 +1356,91 @@
           "st_b3"
         ]
       }
-    }
+    },
+    "hints": [
+      {
+        "id": "hn01",
+        "text": "N 号门后面什么都没有，我确认过。",
+        "kind": "hint",
+        "forKind": "no-prize"
+      },
+      {
+        "id": "hn02",
+        "text": "N 号门是空门，这次我不骗你。",
+        "kind": "hint",
+        "forKind": "no-prize"
+      },
+      {
+        "id": "hn03",
+        "text": "放心开 N 号门，里面不是陷阱。",
+        "kind": "hint",
+        "forKind": "no-prize"
+      },
+      {
+        "id": "hn04",
+        "text": "大奖就压在 N 号门后面，快去。",
+        "kind": "hint",
+        "forKind": "prize"
+      },
+      {
+        "id": "hn05",
+        "text": "N 号门里是奖，我看见了。",
+        "kind": "hint",
+        "forKind": "prize"
+      },
+      {
+        "id": "hn06",
+        "text": "别碰 N 号门，后面是炸弹。",
+        "kind": "hint",
+        "forKind": "hazard"
+      },
+      {
+        "id": "hn07",
+        "text": "N 号门后面有危险，绕开它。",
+        "kind": "hint",
+        "forKind": "hazard"
+      },
+      {
+        "id": "hn08",
+        "text": "N 号门只是个道具，不值钱。",
+        "kind": "hint",
+        "forKind": "item"
+      },
+      {
+        "id": "hn09",
+        "text": "记住 N 号门，它今晚会救你一次。",
+        "kind": "hint",
+        "forKind": "any"
+      },
+      {
+        "id": "hn10",
+        "text": "N 号门，我能说的只有这么多。",
+        "kind": "hint",
+        "forKind": "any"
+      }
+    ],
+    "death": [
+      {
+        "id": "d01",
+        "text": "你没能撑过去……台上只剩回声。",
+        "kind": "death"
+      },
+      {
+        "id": "d02",
+        "text": "灯灭了，你没能带着金币走出去。",
+        "kind": "death"
+      },
+      {
+        "id": "d03",
+        "text": "耐心见底，这一局到此为止。",
+        "kind": "death"
+      },
+      {
+        "id": "d04",
+        "text": "旁白闭嘴了，因为台上已经没人了。",
+        "kind": "death"
+      }
+    ]
   };
 
   /* 旁白人格（契约 v4 §3.1）：lieRateDelta 叠加在撒谎率上，最终仍夹在 [base, cap]。 */
@@ -1372,9 +1592,9 @@
         "doors": [
           "small_prize",
           "empty",
-          "bomb"
+          "empty"
         ],
-        "hostOpensSlot": 2,
+        "hostOpensSlot": 1,
         "narrator": "truth",
         "expect": "small_prize"
       },
@@ -1383,7 +1603,8 @@
         "doors": [
           "empty",
           "big_prize",
-          "trap"
+          "trap",
+          "empty"
         ],
         "hostOpensSlot": 0,
         "narrator": "lie",
@@ -1394,9 +1615,10 @@
         "doors": [
           "trap",
           "big_prize",
+          "empty",
           "empty"
         ],
-        "hostOpensSlot": 0,
+        "hostOpensSlot": 2,
         "narrator": "lie_hard",
         "expect": "cashout"
       }
@@ -1407,18 +1629,23 @@
    * 第 round 轮的可抽取门池：[{ id, weight }]。
    * - round < item.minRound 的物品不出现；
    * - round 命中 config.pool.noBombRounds（第 1 轮）时排除 bomb；
-   * - round >= config.pool.boostRound（第 4 轮）时改用 lateWeight，炸弹/陷阱变多。
+   * - round >= config.pool.boostRound（第 4 轮）时改用 lateWeight，炸弹/陷阱变多；
+   * - doors 为有限整数时，再排除 item.minDoors > doors 的物品
+   *   （契约 v6 §3.1：3 门局 = 1 大奖 + 2 空门，小奖从 4 门局起才可能出现）。
    * 返回全新对象，调用方改它不会污染 GameData。
    */
-  function poolForRound(round) {
+  function poolForRound(round, doors) {
     var r = Math.round(Number(round));
     if (!isFinite(r) || r < 1) r = 1;
+    var n = Number(doors);
+    var limit = (isFinite(n) && n >= 1) ? Math.round(n) : null;
     var boostAt = (config.pool && config.pool.boostRound) || 4;
     var noBomb = (config.pool && config.pool.noBombRounds) || [];
     var list = [];
     for (var i = 0; i < itemList.length; i++) {
       var it = itemList[i];
       if (r < it.minRound) continue;
+      if (limit != null && it.minDoors != null && Number(it.minDoors) > limit) continue;
       if (it.id === 'bomb' && noBomb.indexOf(r) >= 0) continue;
       var w = (r >= boostAt && it.lateWeight != null) ? it.lateWeight : it.weight;
       w = Number(w) || 0;
@@ -1507,6 +1734,113 @@
     return null;
   }
 
+  /* 升级表（设计契约 v6 §2.4）：effect 一律叠加在难度初值之上，cost 为每级价格。
+     effect.delta 是「每级加多少」的单键对象，引擎按这个键改初值。 */
+  var upgrades = [
+    {
+      "id": "starting_coins",
+      "name": "开局金币",
+      "desc": "每级初始金币 +50，开局更敢下注。",
+      "cost": 60,
+      "maxLevel": 3,
+      "effect": {
+        "stat": "coins",
+        "perLevel": 50,
+        "unit": "coins",
+        "delta": {
+          "coins": 50
+        }
+      },
+      "effectLabel": "初始金币 +50/级"
+    },
+    {
+      "id": "starting_suspicion",
+      "name": "开局怀疑值",
+      "desc": "每级初始怀疑值 +1，多质疑一次。",
+      "cost": 50,
+      "maxLevel": 2,
+      "effect": {
+        "stat": "suspicion",
+        "perLevel": 1,
+        "unit": "point",
+        "delta": {
+          "suspicion": 1
+        }
+      },
+      "effectLabel": "初始怀疑值 +1/级"
+    },
+    {
+      "id": "starting_patience",
+      "name": "开局耐心",
+      "desc": "每级初始耐心 +1，多挨一次失误。",
+      "cost": 80,
+      "maxLevel": 2,
+      "effect": {
+        "stat": "patience",
+        "perLevel": 1,
+        "unit": "point",
+        "delta": {
+          "patience": 1
+        }
+      },
+      "effectLabel": "初始耐心 +1/级"
+    },
+    {
+      "id": "shop_discount",
+      "name": "熟客折扣",
+      "desc": "每级商店与换门费用 -10%。",
+      "cost": 70,
+      "maxLevel": 3,
+      "effect": {
+        "stat": "shopDiscount",
+        "perLevel": 0.1,
+        "unit": "ratio",
+        "delta": {
+          "discount": 0.1
+        }
+      },
+      "effectLabel": "商店/换门 -10%/级"
+    },
+    {
+      "id": "peek_plus",
+      "name": "多看一眼",
+      "desc": "每级免费窥视次数 +1，先看再选。",
+      "cost": 60,
+      "maxLevel": 2,
+      "effect": {
+        "stat": "freePeeks",
+        "perLevel": 1,
+        "unit": "count",
+        "delta": {
+          "freePeeks": 1
+        }
+      },
+      "effectLabel": "免费窥视 +1/级"
+    },
+    {
+      "id": "death_insurance",
+      "name": "死亡保险",
+      "desc": "每局一次免死：耐心归零时金币清零并继续。",
+      "cost": 150,
+      "maxLevel": 1,
+      "effect": {
+        "stat": "deathInsurance",
+        "perLevel": 1,
+        "unit": "count",
+        "delta": {
+          "revive": 1
+        }
+      },
+      "effectLabel": "每局一次免死"
+    }
+  ];
+
+  /** 按 id 取升级定义，未知 id 返回 null（引擎 buyUpgrade / ui 升级面板共用）。 */
+  function upgradesById(id) {
+    for (var i = 0; i < upgrades.length; i++) if (upgrades[i].id === id) return upgrades[i];
+    return null;
+  }
+
   /**
    * 结算评级：高轮次收手（config.cashoutMaster）优先，其次按 config.ratings 金币档位。
    * 确定性纯函数，不改任何状态。
@@ -1543,6 +1877,8 @@
     ratingFor: ratingFor,
     shop: shop,
     shopById: shopById,
+    upgrades: upgrades,
+    upgradesById: upgradesById,
     personas: personas,
     personasById: personasById,
     achievements: achievements,

@@ -520,6 +520,82 @@
     return l;
   }
 
+  /** 按门后真实 kind 取提示池：先精确匹配 forKind，再退回 any。 */
+  function hintPoolFor(kind) {
+    var list = doc().hints || [];
+    var exact = [];
+    var any = [];
+    for (var i = 0; i < list.length; i++) {
+      var h = list[i];
+      if (!h || !h.text) continue;
+      if (h.forKind === kind) exact.push(h);
+      else if (h.forKind === 'any') any.push(h);
+    }
+    return exact.length ? exact : any;
+  }
+
+  /**
+   * 质疑成功后的「具体提示」（设计契约 v6 §2.2）：返回 { text, truthful, slot }。
+   * - truthful 是【旁白那一句】的真假（true = 旁白这次没骗你），由调用方或 claim 给出；
+   * - text 是必真的门后情报：claim 有 slot 时按那扇门的**真实** kind 取句（谎话 claim 的
+   *   kind 是反的，所以一律以 doors 里的真实 itemId 为准），把「N 号门」换成门号；
+   * - 拿不到具体门 / 语料时返回 null，交给 js/game.js 的兜底文案。
+   * 纯读：只在挑句时推进 state.rng，同种子可复现。
+   */
+  function hint(state, opts) {
+    opts = opts || {};
+    var claim = opts.claim || null;
+    var doors = doorList(state);
+    var slot = null;
+    if (claim && num(claim.slot, -1) >= 0) slot = Math.round(num(claim.slot, -1));
+    if (slot == null || slot < 0) slot = pickedSlotOf(state);
+    if (slot == null || slot < 0) {
+      for (var i = 0; i < doors.length; i++) {
+        if (!doors[i].opened) { slot = doors[i].slot; break; }
+      }
+    }
+    if (slot == null || slot < 0) return null;
+
+    var door = null;
+    for (var j = 0; j < doors.length; j++) if (doors[j].slot === slot) door = doors[j];
+    if (!door || !door.itemId) return null;
+
+    var data = gameData();
+    var def = (data && data.items) ? data.items[door.itemId] : null;
+    var kind = (def && def.kind) ? def.kind : (claim && claim.kind) || null;
+    var pool = hintPoolFor(kind);
+    if (!pool.length) return null;
+    var picked = pickFrom(state, pool);
+    if (!picked || !picked.text) return null;
+
+    var slotLabel = '第 ' + (slot + 1) + ' 号门';
+    var text = String(picked.text).replace(/N\s*号门/g, slotLabel);
+    var truthful = null;
+    if (typeof opts.truthful === 'boolean') truthful = opts.truthful;
+    else if (claim && typeof claim.truthful === 'boolean') truthful = claim.truthful;
+    return {
+      text: text,
+      truthful: truthful,
+      slot: slot,
+      kind: kind,
+      id: picked.id || '',
+      hintKind: picked.forKind || 'any'
+    };
+  }
+
+  /**
+   * 死亡台词（设计契约 v6 §2.5）：从 narrator.death 里挑一句，kind 为 'death'。
+   * 走 state.rng 可复现；语料缺失返回 null，交给 js/game.js 的兜底文案。
+   */
+  function deathLine(state) {
+    var list = doc().death || [];
+    if (!Array.isArray(list) || !list.length) return null;
+    var l = cloneLine(pickFrom(state, list));
+    if (!l) return null;
+    if (!l.kind) l.kind = 'death';
+    return l;
+  }
+
   /** 彩蛋：按 trigger 取 line；state 上的连击数不满足需要时返回 null。 */
   function special(state, trigger) {
     if (!trigger) return null;
@@ -565,6 +641,8 @@
     special: special,
     endingLine: endingLine,
     settleLine: settleLine,
+    hint: hint,
+    deathLine: deathLine,
     personaOf: personaOf,
     personaDelta: personaDeltaOf,
     claimFor: claimFor,

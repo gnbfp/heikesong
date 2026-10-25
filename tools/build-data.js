@@ -25,6 +25,7 @@ var OUT_FILE = path.join(ROOT, 'js', 'data.js');
 var GENERATED_FROM = [
   'data/items.json',
   'data/shop.json',
+  'data/upgrades.json',
   'data/personas.json',
   'data/achievements.json',
   'data/config.json',
@@ -108,6 +109,7 @@ var ITEM_DESC_MAX = 22;
 /* 契约 v3 §4.1 结局表 —— id / priority / title / lineKind 逐字硬编码；
    narrator.json 的 endings 以 lineKind 为键，每键至少 2 条赛后点评。 */
 var EXPECT_ENDINGS = [
+  { id: 'death', priority: 110, title: '你死了', lineKind: 'death' },
   { id: 'all_in', priority: 100, title: '全识破', lineKind: 'ending_all_in' },
   { id: 'comeback', priority: 90, title: '绝地翻盘', lineKind: 'ending_comeback' },
   { id: 'iron_patience', priority: 80, title: '稳如老狗', lineKind: 'ending_iron' },
@@ -123,13 +125,18 @@ var ENDING_DESC_MAX = 40;
    与商店的【单局限购 cap=2】是两件事，故落成独立字段 patienceCap，二者解耦。 */
 var EXPECT_PATIENCE_CAP = 5;
 
-/* 《开工清单》阶段 4 固定种子剧本 —— 逐字比对（键序也固定）。 */
+/* 契约 v6 §3.3 固定种子剧本 —— 逐字比对（键序也固定）。
+   剧本只决定「口味」：R1 小奖首胜、R2 质疑反杀、R3 主动收手；门数可以不同（R1 3 门 / R2 R3 4 门，
+   顺带展示 3–6 门特性）。每轮都满足 §2.1 的「≥2 空门、≤1 大奖」，且 hostOpensSlot 指向空门、
+   ≠ autoDemo 会选中的那扇门（R1 按 itemId 选 small_prize，R2/R3 选 big_prize）。
+   注意：剧本分支（game.js generateDoors）对剧本只做最低限度修正（≤1 大奖 / ≥1 空门），
+   本表已按契约要求做到 ≥2 空门，故实际发牌零修正、hostScriptFallback=false。 */
 var EXPECT_SEED = {
   seed: 20261024,
   rounds: [
-    { round: 1, doors: ['small_prize', 'empty', 'bomb'], hostOpensSlot: 2, narrator: 'truth', expect: 'small_prize' },
-    { round: 2, doors: ['empty', 'big_prize', 'trap'], hostOpensSlot: 0, narrator: 'lie', expect: 'challenge_win' },
-    { round: 3, doors: ['trap', 'big_prize', 'empty'], hostOpensSlot: 0, narrator: 'lie_hard', expect: 'cashout' }
+    { round: 1, doors: ['small_prize', 'empty', 'empty'], hostOpensSlot: 1, narrator: 'truth', expect: 'small_prize' },
+    { round: 2, doors: ['empty', 'big_prize', 'trap', 'empty'], hostOpensSlot: 0, narrator: 'lie', expect: 'challenge_win' },
+    { round: 3, doors: ['trap', 'big_prize', 'empty', 'empty'], hostOpensSlot: 2, narrator: 'lie_hard', expect: 'cashout' }
   ]
 };
 
@@ -196,6 +203,53 @@ var LEGACY_LINE_IDS = [
   's01', 's02', 's03', 's04', 's05', 's06', 's07', 's08', 's09'
 ];
 
+/* 契约 v6 §2.4 难度表 —— 三档数值逐字硬编码（升级 effect 在此初值上叠加，
+   initial 是 coins/patience/suspicion 三个初值的镜像，供引擎直接取用）。 */
+var EXPECT_DIFFICULTY = {
+  default: 'normal',
+  order: ['normal', 'hard', 'hell'],
+  tiers: {
+    normal: {
+      id: 'normal', lieBase: 0.35, coins: 100, patience: 3, suspicion: 2, rewardMultiplier: 1,
+      initial: { coins: 100, patience: 3, suspicion: 2 }
+    },
+    hard: {
+      id: 'hard', lieBase: 0.5, coins: 80, patience: 2, suspicion: 1, rewardMultiplier: 1.5,
+      initial: { coins: 80, patience: 2, suspicion: 1 }
+    },
+    hell: {
+      id: 'hell', lieBase: 0.65, coins: 60, patience: 1, suspicion: 0, rewardMultiplier: 2,
+      initial: { coins: 60, patience: 1, suspicion: 0 }
+    }
+  }
+};
+/* 契约 v6 §2.5 剧情：首页 3 段（逐段 ≤60 字）。 */
+var EXPECT_STORY_LEN = 3;
+var STORY_MAX = 60;
+/* 契约 v6 §2.1 主持人开门文案固定说法。 */
+var EXPECT_HOST_OPEN_LABEL = '一扇空门';
+/* 契约 v6 §2.4 熟客折扣步长。 */
+var EXPECT_UPGRADE_DISCOUNT_STEP = 0.1;
+/* 契约 v6 §2.4 升级表 —— id/cost/maxLevel/effect.stat/effect.perLevel 冻结（desc 自拟 ≤40 字）。 */
+var EXPECT_UPGRADES = [
+  { id: 'starting_coins', cost: 60, maxLevel: 3, stat: 'coins', perLevel: 50 },
+  { id: 'starting_suspicion', cost: 50, maxLevel: 2, stat: 'suspicion', perLevel: 1 },
+  { id: 'starting_patience', cost: 80, maxLevel: 2, stat: 'patience', perLevel: 1 },
+  { id: 'shop_discount', cost: 70, maxLevel: 3, stat: 'shopDiscount', perLevel: 0.1 },
+  { id: 'peek_plus', cost: 60, maxLevel: 2, stat: 'freePeeks', perLevel: 1 },
+  { id: 'death_insurance', cost: 150, maxLevel: 1, stat: 'deathInsurance', perLevel: 1 }
+];
+var UPGRADE_STATS = ['coins', 'suspicion', 'patience', 'shopDiscount', 'freePeeks', 'deathInsurance'];
+var UPGRADE_DESC_MAX = 40;
+/* 契约 v6 §3.4 质疑提示池（含「N 号门」占位）/ 死亡台词池。 */
+var HINT_MIN = 8;
+var HINT_KINDS = ['no-prize', 'prize', 'hazard', 'item', 'any'];
+var HINT_TEXT_RE = /N\s*号门/;
+var DEATH_MIN = 3;
+var DEATH_LINE_KIND = 'death';
+/* sim.js G8.3 HINT-NO-SPOILER：config.json 任何字符串值都不得含这些剧透词。 */
+var SPOIL_WORDS_RE = /撒谎|说真话|真话|不老实|说谎/;
+
 /* 当前校验目标：让每条 FAIL 都写清「哪个文件、哪个键」，便于负向测试与 Lead 定位。 */
 var CUR_FILE = '';
 
@@ -231,6 +285,7 @@ var config = readJson('config.json');
 var narratorDoc = readJson('narrator.json');
 var seedDemo = readJson('seed_demo.json');
 var shopDoc = readJson('shop.json');
+var upgradesDoc = readJson('upgrades.json');
 var personasDoc = readJson('personas.json');
 var achievementsDoc = readJson('achievements.json');
 
@@ -300,6 +355,29 @@ SUSPICION_DESC_IDS.forEach(function (id) {
   if (String(it.desc).length > ITEM_DESC_MAX) fail(it.id + '.desc 超过 ' + ITEM_DESC_MAX + ' 字：' + String(it.desc).length + ' 字');
 });
 
+/* 契约 v6 §3.1：3 门局 = 1 大奖 + 2 空门，所以空门必须比小奖更容易抽到，小奖从 4 门起才进池。
+   minDoors 是可选字段，由 poolForRound(round, doors) 在发牌时按门数过滤。 */
+var emptyItem = itemsById('empty');
+var smallPrizeItem = itemsById('small_prize');
+if (!(Number(emptyItem.weight) > Number(smallPrizeItem.weight))) {
+  fail('empty.weight(' + emptyItem.weight + ') 必须大于 small_prize.weight(' + smallPrizeItem.weight + ')（契约 v6 §3.1：3 门局要靠空门垫满）');
+}
+var doorCfgMax = Number(config.doorCount && config.doorCount.max);
+itemList.forEach(function (it) {
+  if (it.minDoors == null) return;
+  var md = Number(it.minDoors);
+  if (!(md >= 2) || md !== Math.floor(md)) fail(it.id + '.minDoors 必须是 ≥ 2 的整数，实际 ' + it.minDoors);
+  if (doorCfgMax && md > doorCfgMax) {
+    fail(it.id + '.minDoors(' + md + ') 不得超过 config.doorCount.max(' + doorCfgMax + ')');
+  }
+  if (Number(it.minRound) >= md) {
+    fail(it.id + '.minDoors(' + md + ') 应大于 minRound(' + it.minRound + ')，否则该字段没有意义');
+  }
+});
+if (Number(smallPrizeItem.minDoors) !== 4) {
+  fail('small_prize.minDoors 必须为 4（契约 v6 §3.1：小奖从 4 门局起才可能出现），实际 ' + smallPrizeItem.minDoors);
+}
+
 /* --------------------------------------- 校验 1b：旁白人格（契约 v4 §3.1，恰 3 条） */
 if (!personasDoc || !Array.isArray(personasDoc.personas)) fail('personas.json 顶层需要 { source, personas: [...] }');
 var personaList = personasDoc.personas;
@@ -347,6 +425,44 @@ achievementList.forEach(function (a, i) {
   if (!(Number(chk.threshold) > 0)) fail(a.id + '.check.threshold 必须 > 0，实际 ' + chk.threshold);
   if (Math.round(Number(chk.threshold)) !== Number(chk.threshold)) fail(a.id + '.check.threshold 必须是整数');
 });
+
+/* --------------------------------- 校验 1d：升级表（契约 v6 §2.4，恰 6 条） */
+if (!upgradesDoc || !Array.isArray(upgradesDoc.upgrades)) {
+  fail('upgrades.json 顶层需要 { source, upgrades: [...] }');
+}
+var upgradeList = upgradesDoc.upgrades;
+if (upgradeList.length !== EXPECT_UPGRADES.length) {
+  fail('升级数量应正好 ' + EXPECT_UPGRADES.length + ' 条（契约 v6 §2.4），实际 ' + upgradeList.length);
+}
+var seenUp = {};
+upgradeList.forEach(function (u, i) {
+  var exp = EXPECT_UPGRADES[i];
+  if (!u || typeof u !== 'object') fail('升级 #' + (i + 1) + ' 不是对象');
+  if (u.id !== exp.id) fail('升级顺序/ id 不符：第 ' + (i + 1) + ' 项应为 ' + exp.id + '，实际 ' + u.id);
+  if (seenUp[u.id]) fail('升级 id 重复：' + u.id);
+  seenUp[u.id] = true;
+  if (!u.name) fail(u.id + ' 缺 name');
+  if (!u.desc) fail(u.id + ' 缺 desc（≤' + UPGRADE_DESC_MAX + ' 字）');
+  if (String(u.desc).length > UPGRADE_DESC_MAX) {
+    fail(u.id + '.desc 超过 ' + UPGRADE_DESC_MAX + ' 字：' + String(u.desc).length + ' 字');
+  }
+  if (Number(u.cost) !== exp.cost) fail(u.id + '.cost 应为 ' + exp.cost + '（契约 v6 §2.4），实际 ' + u.cost);
+  if (Number(u.maxLevel) !== exp.maxLevel) fail(u.id + '.maxLevel 应为 ' + exp.maxLevel + '，实际 ' + u.maxLevel);
+  var eff = u.effect;
+  if (!eff || typeof eff !== 'object') fail(u.id + ' 缺 effect { stat, perLevel }');
+  if (UPGRADE_STATS.indexOf(eff.stat) < 0) fail(u.id + '.effect.stat 不在白名单：' + eff.stat);
+  if (eff.stat !== exp.stat) fail(u.id + '.effect.stat 应为 ' + exp.stat + '，实际 ' + eff.stat);
+  if (Number(eff.perLevel) !== exp.perLevel) fail(u.id + '.effect.perLevel 应为 ' + exp.perLevel + '，实际 ' + eff.perLevel);
+  var delta = eff.delta;
+  if (!delta || typeof delta !== 'object' || Array.isArray(delta)) fail(u.id + '.effect.delta 必须是对象');
+  var deltaKeys = Object.keys(delta);
+  if (deltaKeys.length !== 1) fail(u.id + '.effect.delta 必须恰好一个键（引擎按这个键加数值），实际 ' + deltaKeys.join(','));
+  if (Number(delta[deltaKeys[0]]) !== exp.perLevel) {
+    fail(u.id + '.effect.delta.' + deltaKeys[0] + ' 应等于 perLevel(' + exp.perLevel + ')，实际 ' + delta[deltaKeys[0]]);
+  }
+});
+var deathIns = upgradeList.filter(function (u) { return u.id === 'death_insurance'; })[0];
+if (Number(deathIns.maxLevel) !== 1) fail('death_insurance.maxLevel 必须为 1（契约 v6 §2.4：每局一次免死）');
 
 /* --------------------------------------------------- 校验 2：config 关键字段存在 */
 CUR_FILE = 'data/config.json';
@@ -423,6 +539,61 @@ var roundHints = need('roundHints', config.roundHints);
 [1, 2, 3].forEach(function (r) {
   if (!roundHints[r] && !roundHints[String(r)]) fail('roundHints 缺第 ' + r + ' 轮提示');
 });
+
+/* 契约 v6 §2.4 难度表：三档数值 + default/order + initial 镜像必须一致。 */
+var diff = need('difficulty', config.difficulty);
+if (diff.default !== EXPECT_DIFFICULTY.default) {
+  fail('difficulty.default 应为 ' + EXPECT_DIFFICULTY.default + '，实际 ' + diff.default);
+}
+if (!Array.isArray(diff.order) || diff.order.join(',') !== EXPECT_DIFFICULTY.order.join(',')) {
+  fail('difficulty.order 应为 [' + EXPECT_DIFFICULTY.order.join(', ') + ']，实际 ' + JSON.stringify(diff.order));
+}
+if (!diff.tiers || typeof diff.tiers !== 'object') fail('difficulty.tiers 必须是对象');
+EXPECT_DIFFICULTY.order.forEach(function (id) {
+  var exp = EXPECT_DIFFICULTY.tiers[id];
+  var tier = diff.tiers[id];
+  if (!tier) fail('difficulty.tiers 缺 ' + id);
+  if (tier.id !== id) fail('difficulty.tiers.' + id + '.id 应为 ' + id + '，实际 ' + tier.id);
+  if (!tier.name) fail('difficulty.tiers.' + id + ' 缺 name');
+  if (!tier.desc) fail('difficulty.tiers.' + id + ' 缺 desc');
+  if (typeof tier.desc === 'string' && SPOIL_WORDS_RE.test(tier.desc)) {
+    fail('difficulty.tiers.' + id + '.desc 含剧透词（sim.js G8.3）：' + tier.desc);
+  }
+  ['lieBase', 'coins', 'patience', 'suspicion', 'rewardMultiplier'].forEach(function (k) {
+    if (Number(tier[k]) !== exp[k]) {
+      fail('difficulty.tiers.' + id + '.' + k + ' 应为 ' + exp[k] + '（契约 v6 §2.4），实际 ' + tier[k]);
+    }
+  });
+  var ini = tier.initial;
+  if (!ini || typeof ini !== 'object') fail('difficulty.tiers.' + id + ' 缺 initial 镜像');
+  if (Number(ini.coins) !== exp.initial.coins || Number(ini.patience) !== exp.initial.patience || Number(ini.suspicion) !== exp.initial.suspicion) {
+    fail('difficulty.tiers.' + id + '.initial 应与 coins/patience/suspicion 一致，实际 ' + JSON.stringify(ini));
+  }
+  /* 契约 §2.4 字面形状：三档也可直接取（difficulty.<id> 扁平别名，必须与 tiers.<id> 逐字段一致）。 */
+  var alias = diff[id];
+  if (!alias || typeof alias !== 'object') {
+    fail('difficulty.' + id + ' 扁平别名缺失（应与 difficulty.tiers.' + id + ' 一致）');
+  } else if (stableStringify(alias) !== stableStringify(tier)) {
+    fail('difficulty.' + id + ' 扁平别名与 difficulty.tiers.' + id + ' 不一致');
+  }
+});
+/* 契约 v6 §2.5 剧情：3 段、每段 ≤60 字。 */
+var story = need('story', config.story);
+if (!Array.isArray(story)) fail('story 必须是字符串数组（首页按 <p> 拼接）');
+if (story.length !== EXPECT_STORY_LEN) fail('story 应正好 ' + EXPECT_STORY_LEN + ' 段，实际 ' + story.length);
+story.forEach(function (seg, i) {
+  if (typeof seg !== 'string' || !seg.length) fail('story[' + i + '] 必须是非空字符串');
+  if (seg.length > STORY_MAX) fail('story[' + i + '] 超过 ' + STORY_MAX + ' 字：' + seg.length + ' 字');
+});
+/* 契约 v6 §2.1 主持人开门文案。 */
+if (config.hostOpenLabel !== EXPECT_HOST_OPEN_LABEL) {
+  fail('hostOpenLabel 应为「' + EXPECT_HOST_OPEN_LABEL + '」，实际 ' + config.hostOpenLabel);
+}
+/* 契约 v6 §2.4 熟客折扣步长。 */
+var economy = need('economy', config.economy);
+if (Number(economy.upgradeDiscountStep) !== EXPECT_UPGRADE_DISCOUNT_STEP) {
+  fail('economy.upgradeDiscountStep 应为 ' + EXPECT_UPGRADE_DISCOUNT_STEP + '，实际 ' + economy.upgradeDiscountStep);
+}
 var maxChars = Number((config.lies || {}).maxChars || 28);
 var linesPerRound = Number((config.lies || {}).linesPerRound || 2);
 if (linesPerRound !== 2) fail('lies.linesPerRound 应为 2（引擎每轮播 2 句）');
@@ -678,6 +849,41 @@ PERSONA_IDS.forEach(function (pid) {
   });
 });
 
+/* --------- 校验 3f：质疑提示池 hints / 死亡台词池 death（契约 v6 §3.4） */
+var hintList = narratorDoc.hints;
+if (!Array.isArray(hintList) || hintList.length < HINT_MIN) {
+  fail('narrator.hints 至少 ' + HINT_MIN + ' 条质疑提示，实际 ' + (Array.isArray(hintList) ? hintList.length : '（缺失）'));
+}
+var hintIds = {};
+var hintKinds = [];
+hintList.forEach(function (h, i) {
+  if (!h || typeof h !== 'object') fail('narrator.hints#' + i + ' 不是对象');
+  if (!h.id || !h.text) fail('narrator.hints#' + i + ' 缺 id/text');
+  if (hintIds[h.id]) fail('质疑提示 id 重复：' + h.id);
+  hintIds[h.id] = true;
+  if (h.kind !== 'hint') fail('质疑提示 ' + h.id + ' 的 kind 应为 hint，实际 ' + h.kind);
+  if (String(h.text).length > maxChars) fail('质疑提示 ' + h.id + ' 超过 ' + maxChars + ' 字：' + String(h.text).length + ' 字');
+  if (!HINT_TEXT_RE.test(String(h.text))) fail('质疑提示 ' + h.id + ' 必须含「N 号门」占位：' + h.text);
+  if (HINT_KINDS.indexOf(h.forKind) < 0) fail('质疑提示 ' + h.id + ' 的 forKind 非法：' + h.forKind);
+  if (hintKinds.indexOf(h.forKind) < 0) hintKinds.push(h.forKind);
+});
+['no-prize', 'prize', 'hazard', 'item'].forEach(function (k) {
+  if (hintKinds.indexOf(k) < 0) fail('质疑提示必须覆盖 forKind=' + k + '（契约 v6 §2.2：按门后真实内容给提示）');
+});
+var deathList = narratorDoc.death;
+if (!Array.isArray(deathList) || deathList.length < DEATH_MIN) {
+  fail('narrator.death 至少 ' + DEATH_MIN + ' 条死亡台词，实际 ' + (Array.isArray(deathList) ? deathList.length : '（缺失）'));
+}
+var deathIds = {};
+deathList.forEach(function (d, i) {
+  if (!d || typeof d !== 'object') fail('narrator.death#' + i + ' 不是对象');
+  if (!d.id || !d.text) fail('narrator.death#' + i + ' 缺 id/text');
+  if (deathIds[d.id]) fail('死亡台词 id 重复：' + d.id);
+  deathIds[d.id] = true;
+  if (d.kind !== DEATH_LINE_KIND) fail('死亡台词 ' + d.id + ' 的 kind 应为 ' + DEATH_LINE_KIND + '，实际 ' + d.kind);
+  if (String(d.text).length > maxChars) fail('死亡台词 ' + d.id + ' 超过 ' + maxChars + ' 字：' + String(d.text).length + ' 字');
+});
+
 /* 每轮 2 句：配对表必须指向真实存在的 id，且第二句的 kind 与模式一致。 */
 var pairs = (narratorDoc && narratorDoc.pairs) || null;
 if (!pairs) fail('narrator.json 缺 pairs（每轮 2 句的配对表）');
@@ -706,6 +912,43 @@ PAIR_MODES.forEach(function (mode) {
 if (stableStringify(seedDemo) !== stableStringify(EXPECT_SEED)) {
   fail('seed_demo.json 与《开工清单》阶段 4 不一致\n期望：' + stableStringify(EXPECT_SEED) + '\n实际：' + stableStringify(seedDemo));
 }
+/* 契约 v6 §3.3 + §2.1：剧本按通用门数校验（R1 3 门、R2/R3 4 门）。
+   每轮：门数落在 doorCount.min–max、≥2 扇空门、≤1 扇大奖；
+   hostOpensSlot 在范围内、指向空门、且 ≠ 该轮 autoDemo 会选中的物品所在门（R1 small_prize，R2/R3 big_prize）。 */
+seedDemo.rounds.forEach(function (rd, i) {
+  var doors = rd.doors;
+  if (!Array.isArray(doors) || !doors.length) fail('剧本第 ' + (i + 1) + ' 轮缺 doors');
+  if (doors.length < Number(doorCfg.min) || doors.length > Number(doorCfg.max)) {
+    fail('剧本第 ' + (i + 1) + ' 轮门数必须落在 ' + doorCfg.min + '–' + doorCfg.max + '，实际 ' + doors.length);
+  }
+  var bigCount = 0;
+  var emptyCount = 0;
+  doors.forEach(function (id) {
+    var def = itemsById(id);
+    if (!def) fail('剧本第 ' + (i + 1) + ' 轮出现未知物品 id：' + id);
+    if (id === 'big_prize') bigCount++;
+    if (def.kind === 'no-prize') emptyCount++;
+  });
+  if (bigCount > 1) fail('剧本第 ' + (i + 1) + ' 轮最多 1 扇 big_prize，实际 ' + bigCount);
+  if (emptyCount < 2) fail('剧本第 ' + (i + 1) + ' 轮至少 2 扇空门（契约 v6 §2.1），实际 ' + emptyCount);
+  if (!(Number(rd.hostOpensSlot) >= 0 && Number(rd.hostOpensSlot) < doors.length)) {
+    fail('剧本第 ' + (i + 1) + ' 轮 hostOpensSlot 越界：' + rd.hostOpensSlot);
+  }
+  var openedId = doors[Number(rd.hostOpensSlot)];
+  if (itemsById(openedId).kind !== 'no-prize') {
+    fail('剧本第 ' + (i + 1) + ' 轮 hostOpensSlot 必须指向空门，实际指向 ' + openedId +
+      '（' + itemsById(openedId).kind + '）');
+  }
+  /* autoDemo（game.js）按物品 id 选门：R1 找小奖首胜，R2/R3 找大奖；剧本必须含它、且主持人开的不是那扇。 */
+  var pickId = (i === 0) ? 'small_prize' : 'big_prize';
+  var pickSlot = doors.indexOf(pickId);
+  if (pickSlot < 0) fail('剧本第 ' + (i + 1) + ' 轮必须含 autoDemo 会选的 ' + pickId);
+  if (pickSlot === Number(rd.hostOpensSlot)) {
+    fail('剧本第 ' + (i + 1) + ' 轮 hostOpensSlot 不能是 autoDemo 所选门（slot ' + pickSlot + '）');
+  }
+  if (PAIR_MODES.indexOf(rd.narrator) < 0) fail('剧本第 ' + (i + 1) + ' 轮 narrator 非法：' + rd.narrator);
+  if (!rd.expect) fail('剧本第 ' + (i + 1) + ' 轮缺 expect');
+});
 
 /* --------------------------------------------------------------- 生成 js/data.js */
 var items = {};
@@ -738,7 +981,10 @@ out.push('  var meta = ' + stableStringify({
   endingCount: EXPECT_ENDINGS.length,
   personaCount: personaList.length,
   achievementCount: achievementList.length,
-  settleCount: settle.length
+  settleCount: settle.length,
+  upgradeCount: upgradeList.length,
+  hintCount: hintList.length,
+  deathCount: deathList.length
 }).split('\n').join('\n  ') + ';');
 out.push('');
 out.push('  var itemList = ' + stableStringify(itemList).split('\n').join('\n  ') + ';');
@@ -780,18 +1026,23 @@ out.push('  /**');
 out.push('   * 第 round 轮的可抽取门池：[{ id, weight }]。');
 out.push('   * - round < item.minRound 的物品不出现；');
 out.push('   * - round 命中 config.pool.noBombRounds（第 1 轮）时排除 bomb；');
-out.push('   * - round >= config.pool.boostRound（第 4 轮）时改用 lateWeight，炸弹/陷阱变多。');
+out.push('   * - round >= config.pool.boostRound（第 4 轮）时改用 lateWeight，炸弹/陷阱变多；');
+out.push('   * - doors 为有限整数时，再排除 item.minDoors > doors 的物品');
+out.push('   *   （契约 v6 §3.1：3 门局 = 1 大奖 + 2 空门，小奖从 4 门局起才可能出现）。');
 out.push('   * 返回全新对象，调用方改它不会污染 GameData。');
 out.push('   */');
-out.push('  function poolForRound(round) {');
+out.push('  function poolForRound(round, doors) {');
 out.push('    var r = Math.round(Number(round));');
 out.push('    if (!isFinite(r) || r < 1) r = 1;');
+out.push('    var n = Number(doors);');
+out.push('    var limit = (isFinite(n) && n >= 1) ? Math.round(n) : null;');
 out.push('    var boostAt = (config.pool && config.pool.boostRound) || 4;');
 out.push('    var noBomb = (config.pool && config.pool.noBombRounds) || [];');
 out.push('    var list = [];');
 out.push('    for (var i = 0; i < itemList.length; i++) {');
 out.push('      var it = itemList[i];');
 out.push('      if (r < it.minRound) continue;');
+out.push('      if (limit != null && it.minDoors != null && Number(it.minDoors) > limit) continue;');
 out.push('      if (it.id === \'bomb\' && noBomb.indexOf(r) >= 0) continue;');
 out.push('      var w = (r >= boostAt && it.lateWeight != null) ? it.lateWeight : it.weight;');
 out.push('      w = Number(w) || 0;');
@@ -809,6 +1060,16 @@ out.push('');
 out.push('  /** 按 id 取商品定义，未知 id 返回 null（引擎 buy/useItem 与 ui 渲染共用）。 */');
 out.push('  function shopById(id) {');
 out.push('    for (var i = 0; i < shop.length; i++) if (shop[i].id === id) return shop[i];');
+out.push('    return null;');
+out.push('  }');
+out.push('');
+out.push('  /* 升级表（设计契约 v6 §2.4）：effect 一律叠加在难度初值之上，cost 为每级价格。');
+out.push('     effect.delta 是「每级加多少」的单键对象，引擎按这个键改初值。 */');
+out.push('  var upgrades = ' + stableStringify(upgradesDoc.upgrades).split('\n').join('\n  ') + ';');
+out.push('');
+out.push('  /** 按 id 取升级定义，未知 id 返回 null（引擎 buyUpgrade / ui 升级面板共用）。 */');
+out.push('  function upgradesById(id) {');
+out.push('    for (var i = 0; i < upgrades.length; i++) if (upgrades[i].id === id) return upgrades[i];');
 out.push('    return null;');
 out.push('  }');
 out.push('');
@@ -848,6 +1109,8 @@ out.push('    poolForRound: poolForRound,');
 out.push('    ratingFor: ratingFor,');
 out.push('    shop: shop,');
 out.push('    shopById: shopById,');
+out.push('    upgrades: upgrades,');
+out.push('    upgradesById: upgradesById,');
 out.push('    personas: personas,');
 out.push('    personasById: personasById,');
 out.push('    achievements: achievements,');
@@ -925,6 +1188,77 @@ if (GameData.ratingFor(250, 2).title !== '欧皇候选') fail('ratingFor(250) �
 if (GameData.ratingFor(500, 2).title !== '反杀旁白') fail('ratingFor(500) 应为「反杀旁白」');
 if (GameData.ratingFor(250, 4, { cashout: true }).title !== '见好就收大师') fail('第 4 轮 250 金币收手应为「见好就收大师」');
 if (GameData.ratingFor(150, 4, { cashout: true }).title !== '普通赌徒') fail('未达 minCoins 的收手不应给「见好就收大师」');
+
+/* 契约 v6 §2.4/§2.5/§3.4：难度表 / 剧情 / 主持人文案 / 升级表 / 提示池 / 死亡台词必须真进产物。 */
+if (!GameData.config.difficulty || !GameData.config.difficulty.tiers) fail('GameData.config.difficulty 未进入产物');
+if (GameData.config.difficulty.default !== EXPECT_DIFFICULTY.default) fail('产物 difficulty.default 应为 ' + EXPECT_DIFFICULTY.default);
+EXPECT_DIFFICULTY.order.forEach(function (tid) {
+  var t = GameData.config.difficulty.tiers[tid];
+  var exp = EXPECT_DIFFICULTY.tiers[tid];
+  if (!t) fail('产物 difficulty.tiers 缺 ' + tid);
+  ['lieBase', 'coins', 'patience', 'suspicion', 'rewardMultiplier'].forEach(function (k) {
+    if (Number(t[k]) !== exp[k]) fail('产物 difficulty.tiers.' + tid + '.' + k + ' 应为 ' + exp[k] + '，实际 ' + t[k]);
+  });
+  if (Number(t.initial.coins) !== exp.initial.coins || Number(t.initial.patience) !== exp.initial.patience ||
+      Number(t.initial.suspicion) !== exp.initial.suspicion) {
+    fail('产物 difficulty.tiers.' + tid + '.initial 镜像不一致');
+  }
+  /* 扁平别名：difficulty.<id> 必须与 tiers.<id> 一致（qa home.js V0.11/V4.9/V4.10 直接取用）。 */
+  if (stableStringify(GameData.config.difficulty[tid]) !== stableStringify(t)) {
+    fail('产物 difficulty.' + tid + ' 扁平别名与 tiers.' + tid + ' 不一致');
+  }
+});
+if (!Array.isArray(GameData.config.story) || GameData.config.story.length !== EXPECT_STORY_LEN) {
+  fail('GameData.config.story 应为 ' + EXPECT_STORY_LEN + ' 段');
+}
+if (GameData.config.hostOpenLabel !== EXPECT_HOST_OPEN_LABEL) {
+  fail('GameData.config.hostOpenLabel 应为「' + EXPECT_HOST_OPEN_LABEL + '」');
+}
+if (Number(GameData.config.economy.upgradeDiscountStep) !== EXPECT_UPGRADE_DISCOUNT_STEP) {
+  fail('产物 economy.upgradeDiscountStep 应为 ' + EXPECT_UPGRADE_DISCOUNT_STEP);
+}
+var outEndingIds = Object.keys(GameData.config.endings);
+if (outEndingIds.length !== EXPECT_ENDINGS.length) fail('产物 config.endings 应为 ' + EXPECT_ENDINGS.length + ' 项，实际 ' + outEndingIds.length);
+var outDeath = GameData.config.endings.death;
+if (!outDeath) fail('产物缺 death 结局（契约 v6 §2.5）');
+if (Number(outDeath.priority) !== 110) fail('death 结局 priority 应为 110（最高），实际 ' + outDeath.priority);
+if (outDeath.lineKind !== 'death' || outDeath.title !== '你死了') fail('death 结局应为 { title:你死了, lineKind:death }');
+if (!Array.isArray(GameData.upgrades) || GameData.upgrades.length !== EXPECT_UPGRADES.length) {
+  fail('GameData.upgrades 应为 ' + EXPECT_UPGRADES.length + ' 条');
+}
+EXPECT_UPGRADES.forEach(function (exp, i) {
+  var u = GameData.upgrades[i];
+  if (!u || u.id !== exp.id) fail('产物 upgrades 第 ' + (i + 1) + ' 项应为 ' + exp.id);
+  if (Number(u.cost) !== exp.cost || Number(u.maxLevel) !== exp.maxLevel) fail(u.id + ' 的 cost/maxLevel 不符');
+  if (u.effect.stat !== exp.stat || Number(u.effect.perLevel) !== exp.perLevel) fail(u.id + '.effect 不符');
+  var dk = Object.keys(u.effect.delta);
+  if (dk.length !== 1 || Number(u.effect.delta[dk[0]]) !== exp.perLevel) fail(u.id + '.effect.delta 不符');
+});
+if (GameData.upgradesById('death_insurance').maxLevel !== 1) fail('death_insurance.maxLevel 应为 1');
+if (GameData.upgradesById('nope') !== null) fail('upgradesById 未知 id 应返回 null');
+if (!Array.isArray(GameData.narrator.hints) || GameData.narrator.hints.length < HINT_MIN) {
+  fail('产物 narrator.hints 至少 ' + HINT_MIN + ' 条');
+}
+if (!Array.isArray(GameData.narrator.death) || GameData.narrator.death.length < DEATH_MIN) {
+  fail('产物 narrator.death 至少 ' + DEATH_MIN + ' 条');
+}
+/* 契约 v6 §3.1：minDoors 过滤必须真生效 —— 3 门局没有小奖，4 门局才有。 */
+var v6p3 = GameData.poolForRound(1, 3).map(function (e) { return e.id; });
+var v6p4 = GameData.poolForRound(1, 4).map(function (e) { return e.id; });
+if (v6p3.indexOf('small_prize') >= 0) fail('poolForRound(1, 3) 不应出现 small_prize（minDoors=4）：' + v6p3.join(','));
+if (v6p4.indexOf('small_prize') < 0) fail('poolForRound(1, 4) 应出现 small_prize：' + v6p4.join(','));
+if (v6p3.indexOf('big_prize') < 0) fail('3 门局的门池里必须有 big_prize（契约 v6 §2.1：3 门 = 大奖 + 2 空门）');
+if (GameData.poolForRound(1).length !== GameData.poolForRound(1, 6).length && v6p4.indexOf('small_prize') < 0) {
+  fail('缺省 doors 时不应过滤 minDoors');
+}
+/* 契约 v6 §2.1：任何轮次 / 门数组合的门池里都必须有空门可垫。 */
+[3, 4, 5, 6].forEach(function (dn) {
+  for (var rd = 1; rd <= 6; rd++) {
+    var ids = GameData.poolForRound(rd, dn).map(function (e) { return e.id; });
+    var hasEmpty = ids.some(function (id) { return GameData.items[id].kind === 'no-prize'; });
+    if (!hasEmpty) fail('第 ' + rd + ' 轮 ' + dn + ' 门局的门池里没有空门（契约 v6 §2.1）：' + ids.join(','));
+  }
+});
 
 /* 商店契约（设计契约 §2.1/§2.2）：价格、上限、派生布尔、economy 都必须真进了产物。 */
 if (!Array.isArray(GameData.shop) || GameData.shop.length !== 6) fail('GameData.shop 应为 6 件商品');
@@ -1094,5 +1428,7 @@ console.log('[build-data] 已生成 js/data.js：' + Buffer.byteLength(code, 'ut
   + itemList.length + ' 种物品（+ ' + aliasCount + ' 别名） / ' + shop.length + ' 件商品 / '
   + lines.length + ' 条旁白（' + claimableCount + ' 条带线索） + ' + endingLineTotal + ' 条结局点评 / '
   + EXPECT_ENDINGS.length + ' 种结局 / ' + personaList.length + ' 种人格 / ' + settle.length + ' 条结算点评 / '
-  + achievementList.length + ' 个成就 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
+  + achievementList.length + ' 个成就 / ' + upgradeList.length + ' 项升级 / '
+  + hintList.length + ' 条质疑提示 + ' + deathList.length + ' 条死亡台词 / '
+  + '难度 ' + EXPECT_DIFFICULTY.order.length + ' 档 / 剧情 ' + story.length + ' 段 / 演示剧本 ' + seedDemo.rounds.length + ' 轮');
 console.log('[build-data] 来源：' + GENERATED_FROM.join('、'));

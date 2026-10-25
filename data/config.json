@@ -1,12 +1,119 @@
 {
-  "title": "三扇门：别信旁白",
-  "stage": "stage2",
-  "version": "1.0.0",
+  "title": "命运之门",
+  "tagline": "别信旁白",
+  "stage": "stage6",
+  "version": "6.0.0",
+  "hostOpenLabel": "一扇空门",
   "initial": {
     "coins": 100,
     "suspicion": 2,
     "patience": 3
   },
+  "difficulty": {
+    "default": "normal",
+    "order": [
+      "normal",
+      "hard",
+      "hell"
+    ],
+    "tiers": {
+      "normal": {
+        "id": "normal",
+        "name": "普通",
+        "desc": "旁白偶尔误导，容错最多。",
+        "lieBase": 0.35,
+        "coins": 100,
+        "patience": 3,
+        "suspicion": 2,
+        "rewardMultiplier": 1,
+        "initial": {
+          "coins": 100,
+          "patience": 3,
+          "suspicion": 2
+        }
+      },
+      "hard": {
+        "id": "hard",
+        "name": "困难",
+        "desc": "旁白一半在误导，奖励 ×1.5。",
+        "lieBase": 0.5,
+        "coins": 80,
+        "patience": 2,
+        "suspicion": 1,
+        "rewardMultiplier": 1.5,
+        "initial": {
+          "coins": 80,
+          "patience": 2,
+          "suspicion": 1
+        }
+      },
+      "hell": {
+        "id": "hell",
+        "name": "地狱",
+        "desc": "旁白张口就来，一次走错就死，奖励 ×2。",
+        "lieBase": 0.65,
+        "coins": 60,
+        "patience": 1,
+        "suspicion": 0,
+        "rewardMultiplier": 2,
+        "initial": {
+          "coins": 60,
+          "patience": 1,
+          "suspicion": 0
+        }
+      }
+    },
+    "normal": {
+      "id": "normal",
+      "name": "普通",
+      "desc": "旁白偶尔误导，容错最多。",
+      "lieBase": 0.35,
+      "coins": 100,
+      "patience": 3,
+      "suspicion": 2,
+      "rewardMultiplier": 1,
+      "initial": {
+        "coins": 100,
+        "patience": 3,
+        "suspicion": 2
+      }
+    },
+    "hard": {
+      "id": "hard",
+      "name": "困难",
+      "desc": "旁白一半在误导，奖励 ×1.5。",
+      "lieBase": 0.5,
+      "coins": 80,
+      "patience": 2,
+      "suspicion": 1,
+      "rewardMultiplier": 1.5,
+      "initial": {
+        "coins": 80,
+        "patience": 2,
+        "suspicion": 1
+      }
+    },
+    "hell": {
+      "id": "hell",
+      "name": "地狱",
+      "desc": "旁白张口就来，一次走错就死，奖励 ×2。",
+      "lieBase": 0.65,
+      "coins": 60,
+      "patience": 1,
+      "suspicion": 0,
+      "rewardMultiplier": 2,
+      "initial": {
+        "coins": 60,
+        "patience": 1,
+        "suspicion": 0
+      }
+    }
+  },
+  "story": [
+    "你欠了一笔还不上的债，被人推上这张赌桌。",
+    "门后是奖赏或陷阱，而那个旁白会一直对你说话——他多半在骗你。",
+    "活下来，带着金币走出去；耐心耗尽，你就死在这里。"
+  ],
   "suspicion": {
     "cost": 1,
     "winCoins": 20,
@@ -25,7 +132,8 @@
       "DECIDE",
       "SETTLE_ROUND"
     ],
-    "spentStat": true
+    "spentStat": true,
+    "upgradeDiscountStep": 0.1
   },
   "personalities": {
     "default": "sarcastic",
@@ -86,6 +194,12 @@
     "desc": "该走就走，这是赌桌上最贵的一课。"
   },
   "endings": {
+    "death": {
+      "priority": 110,
+      "title": "你死了",
+      "desc": "耐心见底，游戏结束。金币留在了桌上，人没能走出去。",
+      "lineKind": "death"
+    },
     "all_in": {
       "priority": 100,
       "title": "全识破",

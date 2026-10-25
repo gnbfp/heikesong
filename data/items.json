@@ -1,5 +1,5 @@
 {
-  "source": "《三扇门：别信旁白》开工清单 · 阶段 2 物品池表（逐项对应）",
+  "source": "《三扇门：别信旁白》开工清单 · 阶段 2 物品池表（逐项对应）+ 设计契约 v6 §3.1（空门权重上调 / 小奖 minDoors=4 起）",
   "items": [
     {
       "id": "big_prize",
@@ -23,6 +23,7 @@
       "weight": 22,
       "minRound": 1,
       "lateWeight": 22,
+      "minDoors": 4,
       "kind": "prize",
       "desc": "金币 +30、怀疑值 +1。甜头也上头。",
       "icon": "小"
@@ -33,9 +34,9 @@
       "coins": 0,
       "patience": 0,
       "suspicion": 1,
-      "weight": 20,
+      "weight": 40,
       "minRound": 1,
-      "lateWeight": 20,
+      "lateWeight": 40,
       "kind": "no-prize",
       "desc": "空手而归，怀疑值 +1。连回声都没有。",
       "icon": "空"

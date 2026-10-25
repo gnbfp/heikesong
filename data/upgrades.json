@@ -1,0 +1,59 @@
+{
+  "source": "设计契约 v6 §2.4 升级表（6 条；effect 一律叠加在难度初值之上，cost 为每级价格）",
+  "upgrades": [
+    {
+      "id": "starting_coins",
+      "name": "开局金币",
+      "desc": "每级初始金币 +50，开局更敢下注。",
+      "cost": 60,
+      "maxLevel": 3,
+      "effect": { "stat": "coins", "perLevel": 50, "unit": "coins", "delta": { "coins": 50 } },
+      "effectLabel": "初始金币 +50/级"
+    },
+    {
+      "id": "starting_suspicion",
+      "name": "开局怀疑值",
+      "desc": "每级初始怀疑值 +1，多质疑一次。",
+      "cost": 50,
+      "maxLevel": 2,
+      "effect": { "stat": "suspicion", "perLevel": 1, "unit": "point", "delta": { "suspicion": 1 } },
+      "effectLabel": "初始怀疑值 +1/级"
+    },
+    {
+      "id": "starting_patience",
+      "name": "开局耐心",
+      "desc": "每级初始耐心 +1，多挨一次失误。",
+      "cost": 80,
+      "maxLevel": 2,
+      "effect": { "stat": "patience", "perLevel": 1, "unit": "point", "delta": { "patience": 1 } },
+      "effectLabel": "初始耐心 +1/级"
+    },
+    {
+      "id": "shop_discount",
+      "name": "熟客折扣",
+      "desc": "每级商店与换门费用 -10%。",
+      "cost": 70,
+      "maxLevel": 3,
+      "effect": { "stat": "shopDiscount", "perLevel": 0.1, "unit": "ratio", "delta": { "discount": 0.1 } },
+      "effectLabel": "商店/换门 -10%/级"
+    },
+    {
+      "id": "peek_plus",
+      "name": "多看一眼",
+      "desc": "每级免费窥视次数 +1，先看再选。",
+      "cost": 60,
+      "maxLevel": 2,
+      "effect": { "stat": "freePeeks", "perLevel": 1, "unit": "count", "delta": { "freePeeks": 1 } },
+      "effectLabel": "免费窥视 +1/级"
+    },
+    {
+      "id": "death_insurance",
+      "name": "死亡保险",
+      "desc": "每局一次免死：耐心归零时金币清零并继续。",
+      "cost": 150,
+      "maxLevel": 1,
+      "effect": { "stat": "deathInsurance", "perLevel": 1, "unit": "count", "delta": { "revive": 1 } },
+      "effectLabel": "每局一次免死"
+    }
+  ]
+}

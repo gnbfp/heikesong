@@ -1,5 +1,5 @@
 {
-  "source": "《三扇门：别信旁白》开工清单 · 阶段 2/4 旁白语料 + 设计契约 v3 §1（claim 线索）/§3（语录扩容）/§4.1（endings 赛后点评）",
+  "source": "《三扇门：别信旁白》开工清单 · 阶段 2/4 旁白语料 + 设计契约 v3 §1（claim 线索）/§3（语录扩容）/§4.1（endings 赛后点评）+ 设计契约 v4 §3（人格/结算点评）+ 设计契约 v6 §3.4（hints 质疑提示 / death 死亡台词）",
   "pairs": {
     "truth": [
       ["t01", "t02"],
@@ -106,6 +106,11 @@
     { "id": "pf_c2", "text": "快选快选，我快憋不住了！", "kind": "flavor", "truthful": true }
   ],
   "endings": {
+    "death": [
+      { "id": "e_death_1", "text": "你倒在了这张桌子上，金币归我。", "kind": "ending" },
+      { "id": "e_death_2", "text": "下一次，别把耐心当运气用。", "kind": "ending" },
+      { "id": "e_death_3", "text": "记住这场死法，下次活久一点。", "kind": "ending" }
+    ],
     "ending_all_in": [
       { "id": "e_all_in_1", "text": "三问三中，你把我拆穿了。", "kind": "ending" },
       { "id": "e_all_in_2", "text": "我今晚一句谎都没能留住。", "kind": "ending" }
@@ -176,5 +181,23 @@
       "flavor": ["pf_c1", "pf_c2", "fl02"],
       "settle": ["st_w3", "st_l3", "st_c3", "st_b3"]
     }
-  }
+  },
+  "hints": [
+    { "id": "hn01", "text": "N 号门后面什么都没有，我确认过。", "kind": "hint", "forKind": "no-prize" },
+    { "id": "hn02", "text": "N 号门是空门，这次我不骗你。", "kind": "hint", "forKind": "no-prize" },
+    { "id": "hn03", "text": "放心开 N 号门，里面不是陷阱。", "kind": "hint", "forKind": "no-prize" },
+    { "id": "hn04", "text": "大奖就压在 N 号门后面，快去。", "kind": "hint", "forKind": "prize" },
+    { "id": "hn05", "text": "N 号门里是奖，我看见了。", "kind": "hint", "forKind": "prize" },
+    { "id": "hn06", "text": "别碰 N 号门，后面是炸弹。", "kind": "hint", "forKind": "hazard" },
+    { "id": "hn07", "text": "N 号门后面有危险，绕开它。", "kind": "hint", "forKind": "hazard" },
+    { "id": "hn08", "text": "N 号门只是个道具，不值钱。", "kind": "hint", "forKind": "item" },
+    { "id": "hn09", "text": "记住 N 号门，它今晚会救你一次。", "kind": "hint", "forKind": "any" },
+    { "id": "hn10", "text": "N 号门，我能说的只有这么多。", "kind": "hint", "forKind": "any" }
+  ],
+  "death": [
+    { "id": "d01", "text": "你没能撑过去……台上只剩回声。", "kind": "death" },
+    { "id": "d02", "text": "灯灭了，你没能带着金币走出去。", "kind": "death" },
+    { "id": "d03", "text": "耐心见底，这一局到此为止。", "kind": "death" },
+    { "id": "d04", "text": "旁白闭嘴了，因为台上已经没人了。", "kind": "death" }
+  ]
 }
