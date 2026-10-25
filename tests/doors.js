@@ -101,7 +101,6 @@ function bigCount(doors) {
   for (var i = 0; i < doors.length; i++) if (doors[i] && doors[i].itemId === 'big_prize') n++;
   return n;
 }
-function colOf(n) { return n >= 5 ? 2 : 3; }   /* 契约：3–4 门三列、5–6 门两列 */
 
 async function main() {
   ck.section('G9 多门｜C2 ?doors 生效与夹紧');
@@ -252,29 +251,24 @@ async function main() {
     ck.ok('G9.18', wideShare >= 0.30, '4–6 门对局占比 ≥30%（实测 ' + wideShare.toFixed(3) + '）');
   }
 
-  var hasCountEl = !!(typeof G.UI !== 'undefined' || true);
-  if (load.document) {
-    var elCount = load.document.getElementById && load.document.getElementById('doors-count');
-    if (elCount && typeof G.UI !== 'undefined' && typeof G.UI.render === 'function') {
-      var gU = mkGame('normal', 6, 9090);
-      if (await reachPick(gU)) {
-        G.UI.render(gU.Game.state);
-        ck.ok('G9.19', /^6/.test(String(elCount.textContent || '')), '#doors-count 显示当前门数（实测 "' + elCount.textContent + '"）');
-        var elDoors = load.document.getElementById('doors');
-        ck.ok('G9.20', !!elDoors && String(elDoors.getAttribute('data-cols')) === '2', '#doors 的 data-cols 按 6 门为 2 列');
-      } else {
-        ck.ok('G9.19', false, '未能进入 PICK'); ck.ok('G9.20', false, '未能进入 PICK');
-      }
-    } else {
-      ck.skip('G9.19', '#doors-count 文本：等待 ui-render 交付（整合阶段转 PASS）');
-      ck.skip('G9.20', '#doors data-cols：等待 ui-render 交付（整合阶段转 PASS）');
-    }
-  } else {
-    ck.skip('G9.19', '#doors-count 文本：无 DOM 环境（withDom:false），整合阶段用 dom-smoke 复跑');
-    ck.skip('G9.20', '#doors data-cols：无 DOM 环境，整合阶段用 dom-smoke 复跑');
+  var Sh = require('./dom-shim.js');
+  var uiPage = Sh.createPage();
+  var uiGame = uiPage.sandbox.Game;
+  uiGame.init({ mode: 'normal', doors: 6, deps: { setTimeout: L.immediateTimeout, clearTimeout: clearTimeout } });
+  uiGame.start('normal'); uiGame.state.flags.skipAnim = true; uiPage.sandbox.UI.skip();
+  await micro(4);
+  ck.eq('G9.19', uiPage.doc.getElementById('doors-count').textContent, '6 扇门', '#doors-count 显示真实 6 门状态');
+  ck.eq('G9.20', uiPage.doc.querySelectorAll('#doors .door').length, 6, '真实 UI 完整渲染 6 扇门（原 SKIP 转实际断言）');
+  var cols = [];
+  for (var uiN = 3; uiN <= 6; uiN++) {
+    var viewState = uiPage.sandbox.createInitialState('normal');
+    viewState.doorCount = uiN; viewState.doors = [];
+    for (var uiI = 0; uiI < uiN; uiI++) viewState.doors.push({ slot: uiI, itemId: 'empty' });
+    uiPage.sandbox.UI.render(viewState);
+    cols.push(uiPage.doc.getElementById('doors').getAttribute('data-cols'));
   }
-  ck.ok('G9.21', colOf(6) === 2 && colOf(5) === 2 && colOf(4) === 3 && colOf(3) === 3,
-    '列数契约：3–4 门三列、5–6 门两列（colOf 映射自检）');
+  ck.deepEq('G9.21', cols, ['3', '2', '3', '3'], 'v5 A2：3 门三列、4 门两列、5–6 门三列（真实 DOM）');
+  uiGame._clearTimers(); uiPage.sandbox.UI.cancel();
 
   ck.section('G9 多门｜C2 3 门旧行为不回归');
   var legacyBad = [];

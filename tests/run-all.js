@@ -73,6 +73,10 @@ var SUITES = [
     file: 'doors.js', label: 'node tests/doors.js'
   },
   {
+    name: 'regressions.js（重置/结算/重玩/分享/多门界面/未选状态）',
+    file: 'regressions.js', label: 'node tests/regressions.js'
+  },
+  {
     name: 'dom-smoke.js（Node DOM 垫片：真实页面渲染与交互）',
     file: 'dom-smoke.js', label: 'node tests/dom-smoke.js'
   },

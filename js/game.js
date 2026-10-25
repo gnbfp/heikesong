@@ -332,7 +332,10 @@
     var loc = (Game.deps && Game.deps.location) || root.location || {};
     var base = String(loc.href || 'index.html');
     base = base.split('#')[0].split('?')[0];
-    return base + '?seed=' + tag;
+    /* 标签是十六进制，链接统一用十进制，避免 00000010 被读成 10 而不是 16。 */
+    var url = base + '?seed=' + (parseInt(tag, 16) >>> 0);
+    if (Game.state && Game.state.mode === MODES.NORMAL && forceDoorCount) url += '&doors=' + forceDoorCount;
+    return url;
   }
 
   /* -------------------------------------------------------------- Game 本体 */
@@ -348,10 +351,12 @@
     /** 初始化：解析依赖、建立初始状态、绑定 UI。 */
     init: function (opts) {
       opts = opts || {};
+      Game._generation++;
+      Game._clearTimers();
+      Game._cancelPresentation();
       Game.deps = Object.assign(defaultDeps(), opts.deps || {});
       Game._emitter = new root.Emitter();
       Game._timers = [];
-      Game._generation = 0;
       rehearsalPref = rehearsalFromUrl(opts, Game.deps);
       seedPref = seedFromUrl(opts, Game.deps);
       forceDoorCount = doorsFromUrl(opts, Game.deps);
@@ -371,8 +376,9 @@
     /** 开局（IDLE/结算页 → 第 1 轮）。 */
     start: function (mode) {
       var m = (mode === MODES.NORMAL) ? MODES.NORMAL : MODES.DEMO;
-      Game._clearTimers();
       Game._generation++;
+      Game._clearTimers();
+      Game._cancelPresentation();
       Game.state = Game._freshState(m);
       Game._endingModal = null;
       Game._render();
@@ -384,6 +390,7 @@
     reset: function () {
       var gen = ++Game._generation;
       Game._clearTimers();
+      Game._cancelPresentation();
       Game.state = Game._freshState(MODES.DEMO);
       Game._endingModal = null;
       Game._render();
@@ -508,6 +515,7 @@
     beginRound: function () {
       var s = Game.state;
       s.roundResult = null;
+      s.roundDelta = null;
       s.pickedSlot = null;
       s.hostOpenedSlot = null;
       s.doubled = false;
@@ -934,6 +942,7 @@
       s.phase = prevPhase;
       Game.state = s;
       s.doors[slot].revealed = true;
+      s.roundDelta = applied.delta;
       /* 契约 v4 §5：孤注一掷成就 —— 加倍后开出大奖。 */
       if (multiplier === 2 && itemId === 'big_prize') s.allInWin = true;
       Game.setState(STATES.REVEAL);
@@ -943,7 +952,9 @@
         slot: slot, itemId: itemId, item: itemOf(itemId),
         delta: applied.delta, multiplier: multiplier, events: applied.events
       };
+      var gen = Game._generation;
       Game._play('playReveal', [payload]).then(function () {
+        if (gen !== Game._generation) return;
         if (Game.state.phase !== STATES.REVEAL) return;
         Game.settleRound();
       });
@@ -953,6 +964,7 @@
     /** 本轮结算：写入 log / 图鉴，判断耐心归零或进入结算展示。 */
     settleRound: function () {
       var s = Game.state;
+      var gen = Game._generation;
       var slot = s.pickedSlot;
       var itemId = s.doors[slot] ? s.doors[slot].itemId : null;
       var result = {
@@ -962,6 +974,7 @@
         itemId: itemId,
         doubled: s.doubled,
         challenged: !!(s.lastChallenge && s.lastChallenge.ok),
+        delta: Object.assign({ coins: 0, suspicion: 0, patience: 0 }, s.roundDelta || {}),
         coins: s.coins,
         suspicion: s.suspicion,
         patience: s.patience,
@@ -984,7 +997,7 @@
       if (s.patience <= 0) { Game.gameOver(); return result; }
 
       var next = function () {
-        if (special) { Game._playLine(special); }
+        if (gen !== Game._generation || Game.state.phase !== STATES.REVEAL) return;
         Game.showRoundModal(result);
         Game.setState(STATES.SETTLE_ROUND);
       };
@@ -1135,7 +1148,7 @@
           return Game.cashout('settle');
         case 'restart':
           Game._closeModal();
-          Game.start(MODES.DEMO);
+          Game.start(Game.state.mode);
           return true;
         case 'codex':
           return Game.showCodex();
@@ -1896,6 +1909,17 @@
       Game._timers = [];
     },
 
+    /** 局次已更新后取消旧表现层；取消会释放 Promise，但旧回调必须通过局次校验。 */
+    _cancelPresentation: function () {
+      var ui = Game.deps && Game.deps.ui;
+      if (!ui) return;
+      if (ui.cancel) Game._safe(function () { ui.cancel(); });
+      else {
+        if (ui.skip) Game._safe(function () { ui.skip(); });
+        if (ui.closeModal) Game._safe(function () { ui.closeModal(); });
+      }
+    },
+
     _toggleMode: function () {
       var next = Game.state.mode === MODES.DEMO ? MODES.NORMAL : MODES.DEMO;
       Game._toast(next === MODES.DEMO ? '已切到演示模式（固定剧本）' : '已切到普通模式（时间种子）');
@@ -2071,10 +2095,14 @@
     _deltaText: function (result) {
       if (!result) return '';
       var parts = [];
-      var it = itemOf(result.itemId);
-      if (it && it.coins) parts.push('金币 ' + (it.coins > 0 ? '+' : '') + it.coins);
-      if (it && it.patience) parts.push('耐心 ' + it.patience);
-      if (it && it.suspicion) parts.push('怀疑值 ' + it.suspicion);
+      var delta = result.delta || {};
+      var keys = ['coins', 'suspicion', 'patience'];
+      var labels = { coins: '金币', suspicion: '怀疑值', patience: '耐心' };
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var value = Number(delta[key]) || 0;
+        if (value) parts.push(labels[key] + ' ' + (value > 0 ? '+' : '') + value);
+      }
       return parts.length ? parts.join(' · ') : '没有任何变化';
     },
 

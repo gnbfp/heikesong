@@ -147,7 +147,8 @@
       switchStreak: 0,        // 连续换门次数（彩蛋用）
       emptyStreak: 0,         // 连续开空门次数（彩蛋用）
       doublesUsed: 0,         // 本局加倍次数
-      roundResult: null,      // 本轮得失：{ itemId, coins, suspicion, patience, challenged }
+      roundResult: null,      // 本轮得失：{ itemId, coins, suspicion, patience, challenged, delta }
+      roundDelta: null,       // 开奖实际入账增量（含加倍、道具与资源上下限）
       lastChallenge: null,    // 最近一次质疑结果（文案 + 判定）
       joinedAt: 0,            // 开局时间戳（结算页 / 计时用）
       flags: {

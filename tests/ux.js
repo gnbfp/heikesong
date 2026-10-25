@@ -558,8 +558,8 @@ if (!HAS.seedApi) {
   var tag32 = G.Game.seedTag();
   var url32 = G.Game.seedUrl();
   c('X3.2', tag32 !== tag31 && parseInt(tag32, 16) === 424242 &&
-    url32.indexOf('?seed=' + tag32) >= 0,
-    'seedTag() 随种子变化且 seedUrl() 可回放（URL 里带 ?seed=<tag>）',
+    /[?&]seed=424242(?:&|$)/.test(url32),
+    'seedTag() 随种子变化且 seedUrl() 使用无歧义的十进制种子',
     'seedTag=' + tag32 + '→' + parseInt(tag32, 16) + '；seedUrl=' + url32);
 
   var g33 = mkGame('normal', SEED, { location: { href: L.fileUrl(L.INDEX), protocol: 'file:', search: '?seed=777123', hash: '' } });

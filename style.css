@@ -1655,9 +1655,24 @@ ul.persona-list > li.persona-row { display: list-item; }
   body[data-state="REVEAL"] #stage { animation: none !important; }
 }
 
+/* 多门：3 门单行；4 门 2×2；5–6 门三列两行。轨道可收缩，门不挤出舞台。 */
+.doors[data-cols="2"] { grid-template-columns: repeat(2, minmax(0, min(32vw, 250px))); }
+.doors[data-rows="2"] {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: clamp(5px, 1vh, 12px) clamp(8px, 1.6vw, 26px);
+}
+.doors[data-rows="2"] .door { max-height: 100%; padding: clamp(4px, .7vh, 10px); gap: .12em; }
+.doors[data-rows="2"] .door-face { gap: .12em; }
+.doors[data-rows="2"] .door-icon { font-size: clamp(14px, 3.4vh, 36px); }
+.doors[data-rows="2"] .door-name { font-size: var(--fs-sm); }
+.doors[data-rows="2"] .door-tag { min-height: 0; line-height: 1.2; }
+.doors[data-rows="2"] .door-no { top: 4px; left: 6px; }
+
 /* 窄屏 / 竖屏：门与决策区换行仍不产生滚动条 */
 @media (max-aspect-ratio: 1/1) {
   .doors { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .doors[data-cols="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #decide { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .brand-sub { display: none; }
 }
