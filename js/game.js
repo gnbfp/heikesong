@@ -58,6 +58,22 @@
   /** 契约 v4 §6：?seed=xxx 指定的重放种子（本进程内记忆）。 */
   var seedPref = null;
 
+  /** 契约 v5：?doors=N 强制本轮门数（仅普通模式；3–6，越界忽略）。 */
+  var forceDoorCount = null;
+
+  /** 读 URL 里的 ?doors=N（deps.location 可注入，测试用）。 */
+  function doorsFromUrl(opts, deps) {
+    if (opts && opts.doors != null) {
+      var n0 = parseInt(opts.doors, 10);
+      return (n0 >= 3 && n0 <= 6) ? n0 : null;
+    }
+    var loc = (deps && deps.location) || root.location || {};
+    var m = /(?:[?&])doors=(\d+)(?:&|$)/.exec(String(loc.search || ''));
+    if (!m) return null;
+    var n = parseInt(m[1], 10);
+    return (n >= 3 && n <= 6) ? n : null;
+  }
+
   /** 读 URL 里的提词器开关；deps.location 可注入（测试用）。 */
   function rehearsalFromUrl(opts, deps) {
     if (opts && opts.rehearsal === true) return true;
@@ -138,6 +154,13 @@
   }
   function isTopPrize(id) { return id === 'big_prize'; }
   function isNoPrize(id) { return kindOf(id) === 'no-prize'; }
+
+  /** 契约 v5：门数夹在 3–6（非法值回落 3）。 */
+  function clampDoorCount(n) {
+    n = parseInt(n, 10);
+    if (!isFinite(n)) return 3;
+    return Math.max(3, Math.min(6, n));
+  }
 
   /** 商店表：优先用 GameData.shop，缺数据时退化到兜底表（保证零构建下永不空窗）。 */
   function shopTable() {
@@ -331,6 +354,7 @@
       Game._generation = 0;
       rehearsalPref = rehearsalFromUrl(opts, Game.deps);
       seedPref = seedFromUrl(opts, Game.deps);
+      forceDoorCount = doorsFromUrl(opts, Game.deps);
       Game.state = Game._freshState(opts.mode || MODES.DEMO, opts.seed);
       var ui = Game._ui();
       if (ui.init) { try { ui.init(Game); } catch (e) { Game._warn('ui.init', e); } }
@@ -496,6 +520,7 @@
       s.itemBuffs = { fuse: false };   // 道具增益只在「使用的这一轮」有效
       /* 闭嘴卡不在这里重置：它在 DECIDE 里使用，沉默的是**下一轮**的旁白
          （本轮旁白早已念完），由 narrate() 消费后自动清空。 */
+      s.doorCount = Game.doorCountFor(s.round);   // 契约 v5：先定门数，再发牌
       s.doors = Game.generateDoors(s.round);
       Game.setState(STATES.ROUND_INTRO);
 
@@ -1164,22 +1189,66 @@
     /**
      * 发牌（阶段 1 验收：1 大奖 / 1 空门 / 1 小奖；阶段 2 起走权重池）。
      * 不变量：恰好 ≤1 个 big_prize，且至少 1 扇「非大奖」门，保证主持人永远有门可开。
+     * 契约 v5：门数由 Game.doorCountFor 决定（3–6）；4–6 门保证恰好 1 扇大奖。
      */
     generateDoors: function (round) {
       var s = Game.state;
       var rng = s.rng;
       var ids;
       var script = Game.script();
-      if (script && script.doors && script.doors.length === 3) {
+      var n = (s && s.doorCount != null) ? clampDoorCount(s.doorCount) : Game.doorCountFor(round);
+      if (script && Array.isArray(script.doors) && script.doors.length) {
         ids = script.doors.slice();
       } else if (round <= 1) {
         ids = RNG.shuffle(rng, ['big_prize', 'small_prize', 'empty']);
+        /* 第 1 轮多出来的门只放空门/小奖（新手保护：第 1 轮不开出炸弹）。 */
+        while (ids.length < n) ids.push(RNG.int(rng, 0, 99) < 60 ? 'empty' : 'small_prize');
+        ids = RNG.shuffle(rng, ids);
       } else {
-        ids = Game._drawPool(round, 3);
+        ids = Game._drawPool(round, n);
+      }
+      /* 契约 v5：4–6 门的回合保证恰好 1 扇大奖，否则门越多期望越差；3 门沿用旧行为（≤1）。 */
+      if (ids.length > 3 && ids.indexOf('big_prize') < 0) {
+        var idx = -1;
+        for (var i = 0; i < ids.length; i++) {
+          if (isNoPrize(ids[i]) || kindOf(ids[i]) === 'hazard') { idx = i; break; }
+        }
+        ids[idx >= 0 ? idx : ids.length - 1] = 'big_prize';
       }
       return ids.map(function (id, i) {
         return { slot: i, itemId: id, opened: false, revealed: false };
       });
+    },
+
+    /**
+     * 契约 v5：本轮门数（3–6）。
+     * 优先级：演示剧本的 doors 长度 → 普通模式 / 打开 ?doors=N → config.doorCount 权重抽 → 3。
+     * 注意：权重抽会推进 state.rng；beginRound 只调一次并写入 state.doorCount，
+     * 其余调用方（测试直接调 generateDoors）走无副作用的分支。
+     */
+    doorCountFor: function (round) {
+      var s = Game.state || {};
+      var script = Game.script();
+      if (s.mode !== MODES.NORMAL && script && Array.isArray(script.doors) && script.doors.length) {
+        return clampDoorCount(script.doors.length);
+      }
+      if (s.mode === MODES.NORMAL && forceDoorCount) return forceDoorCount;
+      var dc = config().doorCount;
+      if (!dc || typeof dc !== 'object') return 3;
+      var lo = clampDoorCount(dc.min);
+      var hi = clampDoorCount(dc.max);
+      if (hi < lo) hi = lo;
+      var weights = dc.weights || {};
+      var entries = [];
+      for (var k in weights) {
+        if (!Object.prototype.hasOwnProperty.call(weights, k)) continue;
+        var n = parseInt(k, 10);
+        var w = Number(weights[k]);
+        if (isFinite(n) && n >= lo && n <= hi && isFinite(w) && w > 0) entries.push({ n: n, w: w });
+      }
+      if (!entries.length) return lo;
+      var chosen = RNG.weighted(s.rng || { seed: 1, cursor: 0 }, entries, function (e) { return e.w; });
+      return (chosen && chosen.n) ? chosen.n : lo;
     },
 
     /** 从权重池抽 n 个不重复物品，并修正到满足不变量。 */
