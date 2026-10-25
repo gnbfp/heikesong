@@ -108,6 +108,36 @@
     { id: 'patience_charm', name: '续命符', price: 60, cap: 2, kind: 'instant', icon: 'charm', desc: '立刻回 1 点耐心，最多攒到 5。' }
   ];
 
+  /* ---------------- 契约 v6：难度 / 升级 / 剧情（data/*.json 未就绪时的兜底，数据层就绪后以数据为准） */
+
+  var DIFFICULTY_IDS = ['normal', 'hard', 'hell'];
+
+  var DIFFICULTY_NAMES = { normal: '普通', hard: '困难', hell: '地狱' };
+
+  /** 契约 §2.4 难度表兜底：lieBase / 耐心 / 金币 / 怀疑值 / 奖励倍率。 */
+  var DEFAULT_DIFFICULTY = {
+    normal: { id: 'normal', name: '普通', lieBase: 0.35, patience: 3, coins: 100, suspicion: 2, reward: 1, desc: '旁白只是随口一说。' },
+    hard: { id: 'hard', name: '困难', lieBase: 0.5, patience: 2, coins: 80, suspicion: 1, reward: 1.5, desc: '旁白开始认真骗你。' },
+    hell: { id: 'hell', name: '地狱', lieBase: 0.65, patience: 1, coins: 60, suspicion: 0, reward: 2, desc: '一次错信，就是死。' }
+  };
+
+  /** 契约 §2.4 升级表兜底（data/upgrades.json 就绪后以数据为准）。 */
+  var DEFAULT_UPGRADES = [
+    { id: 'starting_coins', name: '私房钱', desc: '每级开局多 50 金币。', cost: 60, maxLevel: 5, effect: { type: 'starting_coins', value: 50 } },
+    { id: 'starting_suspicion', name: '多疑症', desc: '每级开局多 1 点怀疑值。', cost: 80, maxLevel: 3, effect: { type: 'starting_suspicion', value: 1 } },
+    { id: 'starting_patience', name: '硬命', desc: '每级开局多 1 点耐心。', cost: 100, maxLevel: 3, effect: { type: 'starting_patience', value: 1 } },
+    { id: 'shop_discount', name: '熟客折扣', desc: '每级商店与换门费用 −10%。', cost: 120, maxLevel: 3, effect: { type: 'shop_discount', value: 0.1 } },
+    { id: 'peek_plus', name: '第六感', desc: '每级每轮多 1 次免费窥视。', cost: 70, maxLevel: 3, effect: { type: 'peek_plus', value: 1 } },
+    { id: 'death_insurance', name: '死亡保险', desc: '每局一次：耐心归零时改为金币清零并继续。', cost: 200, maxLevel: 1, effect: { type: 'death_insurance', value: 1 } }
+  ];
+
+  /** 契约 §2.5 首页剧情兜底（data/config.json.story 缺失时用）。 */
+  var DEFAULT_STORY = [
+    '你在急诊室醒来，账单压在枕头下面。有人俯身过来，声音很轻：三扇门，一门财富，两门空。选对了，你带着钱离开。',
+    '可门边还站着一位旁白。它说的每一句话，都可能是谎——质疑它要付代价，信错它会要命。',
+    '门已经开了。撑过去，或者死在这里。'
+  ];
+
   /* ------------------------------------------------------------ 依赖与工具 */
 
   function fallbackTimeout(fn) { fn(); return 0; }
@@ -280,7 +310,8 @@
   /** 偏好设置（本机持久，静默降级）。 */
   var PREFS_DEFAULT = {
     onboarded: false, muted: false, persona: 'sarcastic',
-    animationSpeed: 'full', bgm: true, sound: true
+    animationSpeed: 'full', bgm: true, sound: true,
+    difficulty: 'normal'
   };
   function prefsOf() {
     var store = Game._store && Game._store();
@@ -333,6 +364,335 @@
     var base = String(loc.href || 'index.html');
     base = base.split('#')[0].split('?')[0];
     return base + '?seed=' + tag;
+  }
+
+  /* ---------------------------------------- 契约 v6：难度 / 升级 / 钱包 / 换门 工具 */
+
+  function numOr(v, fallback) {
+    var n = Number(v);
+    return isFinite(n) ? n : fallback;
+  }
+
+  /** 可用的存档后端（deps.store 优先，其次全局 CodexStore）。 */
+  function storeRef() {
+    var st = null;
+    try {
+      if (Game && typeof Game._store === 'function') st = Game._store();
+    } catch (e) { /* 静默 */ }
+    /* deps.store 必须是 CodexStore 形状；原样传 localStorage 时退回全局 CodexStore
+       （它内部已包住同一个 localStorage，写入的键完全一致）。 */
+    if (st && typeof st.loadWallet === 'function' && typeof st.saveWallet === 'function') return st;
+    return root.CodexStore || st || null;
+  }
+
+  /**
+   * 难度表：data/config.json 的 difficulty（对象 {normal,hard,hell} 或数组 [{id,...}]）优先；
+   * 字段名兼容 coins/startingCoins、suspicion/startingSuspicion、patience/startingPatience、
+   * reward/rewardMul。缺失的档位退回契约 §2.4 的内置值（normal 用 config.initial 兜底）。
+   */
+  function difficultyTable() {
+    var cfg = config();
+    var init = cfg.initial || root.DEFAULT_RESOURCES || {};
+    var out = {
+      normal: Object.assign({}, DEFAULT_DIFFICULTY.normal, {
+        coins: numOr(init.coins, DEFAULT_DIFFICULTY.normal.coins),
+        suspicion: numOr(init.suspicion, DEFAULT_DIFFICULTY.normal.suspicion),
+        patience: numOr(init.patience, DEFAULT_DIFFICULTY.normal.patience)
+      }),
+      hard: Object.assign({}, DEFAULT_DIFFICULTY.hard),
+      hell: Object.assign({}, DEFAULT_DIFFICULTY.hell)
+    };
+    var raw = cfg.difficulty;
+    var apply = function (def) {
+      if (!def || typeof def !== 'object') return;
+      var id = def.id;
+      if (DIFFICULTY_IDS.indexOf(id) < 0) return;
+      var base = out[id];
+      if (def.name != null) base.name = String(def.name);
+      if (def.desc != null) base.desc = String(def.desc);
+      base.lieBase = numOr(def.lieBase != null ? def.lieBase : def.lie, base.lieBase);
+      /* 数据层可能把初始值放在 def.initial / def.resources 里（契约 v6 data/config.json.difficulty.tiers）。 */
+      var nest = (def.initial && typeof def.initial === 'object') ? def.initial
+        : ((def.resources && typeof def.resources === 'object') ? def.resources : null);
+      var pickNum = function (a, b, c, fallback) {
+        if (a != null) return numOr(a, fallback);
+        if (b != null) return numOr(b, fallback);
+        if (c != null) return numOr(c, fallback);
+        return fallback;
+      };
+      base.coins = pickNum(def.coins, def.startingCoins, nest ? nest.coins : null, base.coins);
+      base.suspicion = pickNum(def.suspicion, def.startingSuspicion, nest ? nest.suspicion : null, base.suspicion);
+      base.patience = pickNum(def.patience, def.startingPatience, nest ? nest.patience : null, base.patience);
+      base.reward = pickNum(def.reward, def.rewardMul, def.rewardMultiplier != null ? def.rewardMultiplier : def.multiplier, base.reward);
+    };
+    var i;
+    var src = raw;
+    /* 新数据形状：{ default, order, tiers:{ normal:{...}, ... } } */
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && raw.tiers && typeof raw.tiers === 'object') src = raw.tiers;
+    if (Array.isArray(src)) {
+      for (i = 0; i < src.length; i++) apply(src[i]);
+    } else if (src && typeof src === 'object') {
+      for (i = 0; i < DIFFICULTY_IDS.length; i++) {
+        var one = src[DIFFICULTY_IDS[i]];
+        if (one && typeof one === 'object') {
+          if (one.id == null) one = Object.assign({ id: DIFFICULTY_IDS[i] }, one);
+          apply(one);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** 单档难度的规范化视图。 */
+  function difficultyDef(id) {
+    var table = difficultyTable();
+    var key = DIFFICULTY_IDS.indexOf(id) >= 0 ? id : 'normal';
+    var d = table[key] || DEFAULT_DIFFICULTY[key];
+    return {
+      id: key,
+      name: d.name || DIFFICULTY_NAMES[key] || key,
+      desc: d.desc || '',
+      lieBase: numOr(d.lieBase, DEFAULT_DIFFICULTY[key].lieBase),
+      coins: Math.max(0, Math.round(numOr(d.coins, DEFAULT_DIFFICULTY[key].coins))),
+      suspicion: Math.max(0, Math.round(numOr(d.suspicion, DEFAULT_DIFFICULTY[key].suspicion))),
+      patience: Math.max(0, Math.round(numOr(d.patience, DEFAULT_DIFFICULTY[key].patience))),
+      reward: numOr(d.reward, DEFAULT_DIFFICULTY[key].reward)
+    };
+  }
+
+  /** 当前难度 id（偏好设置是本机持久来源）。 */
+  function currentDifficultyId() {
+    var prefs = prefsOf();
+    if (DIFFICULTY_IDS.indexOf(prefs.difficulty) >= 0) return prefs.difficulty;
+    var s = Game.state;
+    if (s && DIFFICULTY_IDS.indexOf(s.difficulty) >= 0) return s.difficulty;
+    /* 数据层 config.difficulty.default（契约 v6 §2.4）。 */
+    var raw = config().difficulty;
+    if (raw && typeof raw === 'object') {
+      var def = raw.default != null ? raw.default : raw.Default;
+      if (DIFFICULTY_IDS.indexOf(def) >= 0) return def;
+    }
+    return 'normal';
+  }
+
+  /** 升级表：GameData.upgrades / config.upgrades 优先，缺失退回内置 6 条。 */
+  function upgradeTable() {
+    var data = Game.deps && Game.deps.data;
+    var cfg = config();
+    var list = null;
+    if (data) {
+      if (Array.isArray(data.upgrades)) list = data.upgrades;
+      else if (Array.isArray(data.upgradeList)) list = data.upgradeList;
+      else if (data.upgrades && Array.isArray(data.upgrades.items)) list = data.upgrades.items;
+    }
+    if ((!list || !list.length) && cfg) {
+      if (Array.isArray(cfg.upgrades)) list = cfg.upgrades;
+      else if (cfg.upgrades && Array.isArray(cfg.upgrades.items)) list = cfg.upgrades.items;
+    }
+    if (!list || !list.length) list = DEFAULT_UPGRADES;
+    return list.filter(function (u) { return u && typeof u.id === 'string'; });
+  }
+
+  function upgradeDef(id) {
+    var list = upgradeTable();
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
+  function upgradeMaxLevel(u) {
+    var m = Math.round(numOr(u && u.maxLevel, 1));
+    return m < 1 ? 1 : m;
+  }
+
+  /** 升级价格：数据层给 costs 数组则按级取，否则 cost 固定（缺失时 0 级免费，不建议）。 */
+  function upgradeCostOf(u, level) {
+    if (!u) return 0;
+    var lv = Math.max(0, Math.round(numOr(level, 0)));
+    if (Array.isArray(u.costs) && u.costs.length) {
+      var c = numOr(u.costs[Math.min(lv, u.costs.length - 1)], NaN);
+      if (isFinite(c)) return Math.max(0, Math.round(c));
+    }
+    return Math.max(0, Math.round(numOr(u.cost != null ? u.cost : u.price, 0)));
+  }
+
+  /**
+   * 数据层 effect.stat → 引擎内部 type 的别名表。
+   * （data/upgrades.json：{ stat:'coins', perLevel:50, unit:'coins', delta:{coins:50} }）
+   */
+  var EFFECT_TYPE_ALIAS = {
+    coins: 'starting_coins', startingCoins: 'starting_coins', starting_coins: 'starting_coins', startCoins: 'starting_coins',
+    suspicion: 'starting_suspicion', startingSuspicion: 'starting_suspicion', starting_suspicion: 'starting_suspicion',
+    patience: 'starting_patience', startingPatience: 'starting_patience', starting_patience: 'starting_patience',
+    shopDiscount: 'shop_discount', discount: 'shop_discount', shop_discount: 'shop_discount', priceDiscount: 'shop_discount',
+    freePeeks: 'peek_plus', freePeek: 'peek_plus', peek: 'peek_plus', peekPlus: 'peek_plus', peek_plus: 'peek_plus',
+    deathInsurance: 'death_insurance', revive: 'death_insurance', death_insurance: 'death_insurance', immortal: 'death_insurance'
+  };
+
+  /** 升级效果规范化：{ type, value }。兼容 effect 为字符串 / 对象 / 数据层直接给 type+value。 */
+  function upgradeEffectOf(u) {
+    if (!u) return { type: '', value: 0 };
+    var e = u.effect != null ? u.effect : (u.effects != null ? u.effects : u);
+    var type = (typeof e === 'string') ? e : (e.type || e.stat || u.type || u.stat || u.id || '');
+    type = EFFECT_TYPE_ALIAS[type] || type;
+    var value = null;
+    if (typeof e === 'object' && e != null) {
+      if (e.value != null) value = e.value;
+      else if (e.amount != null) value = e.amount;
+      else if (e.perLevel != null) value = e.perLevel;
+      else if (e.delta && typeof e.delta === 'object') {
+        for (var k in e.delta) {
+          if (Object.prototype.hasOwnProperty.call(e.delta, k)) {
+            var dv = numOr(e.delta[k], NaN);
+            if (isFinite(dv)) { value = Math.abs(dv); break; }
+          }
+        }
+      }
+    }
+    if (value == null) value = u.value != null ? u.value : u.amount;
+    value = numOr(value, 0);
+    if (type === 'shop_discount' && value > 1) value = value / 100;   // 数据层也可能写 10 表示 −10%
+    return { type: type, value: value };
+  }
+
+  /** 已购升级等级（白名单过滤 + 上限截断）。 */
+  function upgradeLevelsMap() {
+    var store = storeRef();
+    var raw = {};
+    if (store && typeof store.loadUpgrades === 'function') {
+      try { raw = store.loadUpgrades() || {}; } catch (e) { raw = {}; }
+    }
+    var out = {};
+    var table = upgradeTable();
+    for (var i = 0; i < table.length; i++) {
+      var u = table[i];
+      var lv = Math.round(numOr(raw[u.id], 0));
+      var max = upgradeMaxLevel(u);
+      if (lv > max) lv = max;
+      if (lv > 0) out[u.id] = lv;
+    }
+    return out;
+  }
+
+  /** 某类升级效果的累计加成值。 */
+  function upgradeBonus(type) {
+    var levels = upgradeLevelsMap();
+    var table = upgradeTable();
+    var sum = 0;
+    for (var i = 0; i < table.length; i++) {
+      var u = table[i];
+      var lv = levels[u.id] || 0;
+      if (!lv) continue;
+      var eff = upgradeEffectOf(u);
+      if (eff.type === type) sum += numOr(eff.value, 0) * lv;
+    }
+    return sum;
+  }
+
+  /** 熟客折扣率（0–0.5）。 */
+  function shopDiscountRate() {
+    var r = upgradeBonus('shop_discount');
+    if (r > 0.5) r = 0.5;
+    if (r < 0) r = 0;
+    return r;
+  }
+
+  /** 商店 / 换门价格套用折扣。 */
+  function priceAfterDiscount(price) {
+    var p = numOr(price, 0);
+    var r = shopDiscountRate();
+    if (!r) return Math.round(p);
+    return Math.max(0, Math.round(p * (1 - r)));
+  }
+
+  /** 首页剧情 3 段（data/config.json 的 story；字符串数组或 {paragraphs} 均可）。 */
+  function storyLines() {
+    var s = config().story;
+    var list = null;
+    if (Array.isArray(s)) list = s;
+    else if (s && Array.isArray(s.paragraphs)) list = s.paragraphs;
+    else if (s && Array.isArray(s.lines)) list = s.lines;
+    if (!list || !list.length) return DEFAULT_STORY.slice();
+    return list.filter(function (p) { return typeof p === 'string' && p.length; });
+  }
+
+  /** HTML 转义（剧情文案要拼进 innerHTML）。 */
+  function htmlEscape(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** 契约 §2.5：首页剧情 3 段用 <p> 拼接（字符串数组或段落对象都可）。 */
+  function storyHtml() {
+    var lines = storyLines();
+    if (!lines.length) return '';
+    return lines.map(function (line) { return '<p>' + htmlEscape(line) + '</p>'; }).join('');
+  }
+
+  /** 物品展示名（缺数据时退回 id）。 */
+  function itemLabelOf(id) {
+    var it = null;
+    try { it = itemOf(id); } catch (e) { it = null; }
+    return (it && it.name) ? it.name : String(id == null ? '' : id);
+  }
+
+  /**
+   * 契约 v6 §2.2：把驳回线索（claim）翻成人话提示。
+   * claim 形如 { type:'slot_kind'|'picked_kind'|'big_prize_in', slot?, kind?, truthful }。
+   */
+  function claimHintText(claim) {
+    if (!claim || typeof claim !== 'object') return '';
+    var kindName = itemLabelOf(claim.kind);
+    var slotNo = (claim.slot != null) ? (claim.slot + 1) : null;
+    var tail = claim.truthful ? '这句是真话。' : '这句是假的。';
+    if (claim.type === 'picked_kind') {
+      return '旁白说你选的那扇门是「' + kindName + '」——' + tail;
+    }
+    if (claim.type === 'big_prize_in') {
+      return '旁白说大奖在 ' + (slotNo != null ? slotNo + ' 号门' : '某扇门') + '——' + tail;
+    }
+    if (slotNo != null && claim.kind != null) {
+      return '旁白说 ' + slotNo + ' 号门是「' + kindName + '」——' + tail;
+    }
+    return '';
+  }
+
+  /**
+   * 契约 v6 §2.4：本局开局资源 = 难度初值 + 升级加成（叠加，不替换）。
+   * @returns {{coins:number, suspicion:number, patience:number, rewardMul:number,
+   *            peekFree:number, discount:number, insurance:boolean}}
+   */
+  function resourcePlan(diffId) {
+    var d = difficultyDef(diffId);
+    var plan = {
+      coins: d.coins, suspicion: d.suspicion, patience: d.patience,
+      rewardMul: d.reward, peekFree: 0, discount: 0, insurance: false,
+      difficulty: d.id, lieBase: d.lieBase
+    };
+    var levels = upgradeLevelsMap();
+    var table = upgradeTable();
+    for (var i = 0; i < table.length; i++) {
+      var u = table[i];
+      var lv = levels[u.id] || 0;
+      if (!lv) continue;
+      var eff = upgradeEffectOf(u);
+      var v = numOr(eff.value, 0);
+      if (eff.type === 'starting_coins') plan.coins += v * lv;
+      else if (eff.type === 'starting_suspicion') plan.suspicion += v * lv;
+      else if (eff.type === 'starting_patience') plan.patience += v * lv;
+      else if (eff.type === 'peek_plus') plan.peekFree += v * lv;
+      else if (eff.type === 'shop_discount') plan.discount += (v > 1 ? v / 100 : v) * lv;
+      else if (eff.type === 'death_insurance') plan.insurance = true;
+    }
+    if (plan.discount > 0.5) plan.discount = 0.5;
+    if (plan.discount < 0) plan.discount = 0;
+    plan.coins = Math.max(0, Math.round(plan.coins));
+    plan.suspicion = Math.max(0, Math.round(plan.suspicion));
+    plan.patience = Math.max(0, Math.round(plan.patience));
+    plan.peekFree = Math.max(0, Math.round(plan.peekFree));
+    return plan;
   }
 
   /* -------------------------------------------------------------- Game 本体 */
@@ -496,6 +856,31 @@
         case 'clear_save':
           return Game.clearSave();
 
+        /* ---- 契约 v6：首页 / 难度 / 升级 / 换门 ---- */
+        case 'set_difficulty':
+          return Game.setDifficulty(payload.id || payload.difficulty || payload.value);
+
+        case 'buy_upgrade':
+          return Game.buyUpgrade(payload.id).ok;
+
+        case 'upgrade_shop':
+        case 'open_upgrade':
+          return Game.openUpgrade();
+
+        case 'home':
+        case 'home_start':
+          return Game.home();
+
+        /* 契约 §2.3：换门 = 弹「重新选门」，不自动换。 */
+        case 'switch':
+          return Game.beginSwitch();
+
+        case 'choose_switch':
+          return Game.chooseSwitch(payload.slot);
+
+        case 'cancel_switch':
+          return Game.cancelSwitch();
+
         default:
           Game._warn('未知动作', type);
           return false;
@@ -516,6 +901,9 @@
       s.hostScriptFallback = false;
       s.narratorLines = [];
       s.lastChallenge = null;
+      s.lastHint = null;                 // 契约 v6 §2.2：提示随轮次清空
+      s.switchedThisRound = false;       // 契约 v6 §2.3：每轮最多换一次门
+      s.flags.switchPick = false;        // 契约 v6 §2.3：换门选门子流程复位
       s.flags.revealLocked = false;
       s.itemBuffs = { fuse: false };   // 道具增益只在「使用的这一轮」有效
       /* 闭嘴卡不在这里重置：它在 DECIDE 里使用，沉默的是**下一轮**的旁白
@@ -592,11 +980,11 @@
       var script = Game.script();
       var hostSlot = (script && script.hostOpensSlot != null) ? script.hostOpensSlot : null;
       /* 剧本门位是「口味」不是「特权」：它同样必须满足主持人的硬不变量——
-         不能是玩家所选的门、不能是大奖门、必须是未开的合法槽位。
-         否则 R3 玩家点 1 号门时会出现「主持人打开玩家自己那扇门」的穿帮，
-         并被 switchDoor 顺势送一个白拿大奖（评审 P0-1）。不合法就退化为真实 hostPick。 */
+         不能是玩家所选的门、必须是一扇「空门」（kind==='no-prize'）、且必须是未开的合法槽位。
+         否则 R3 玩家点 1 号门时会出现「主持人打开玩家自己那扇门」的穿帮（评审 P0-1），
+         或者主持人当众开出一件大奖/炸弹（契约 v6 §2.1）。不合法就退化为真实 hostPick。 */
       if (hostSlot != null && (hostSlot === slot || !s.doors[hostSlot] || s.doors[hostSlot].opened
-        || s.doors[hostSlot].itemId === 'big_prize')) {
+        || !isNoPrize(s.doors[hostSlot].itemId))) {
         s.hostScriptFallback = true;
         hostSlot = null;
       }
@@ -615,12 +1003,14 @@
       return true;
     },
 
-    /** 长按窥视：每轮一次，给一条模糊提示（不改数值、不影响开奖）。 */
+    /** 长按窥视：每轮 1 次（「第六感」升级每级 +1 次），给一条模糊提示（不改数值、不影响开奖）。 */
     peek: function (slot) {
       var s = Game.state;
-      if (s.peekUsed) { Game._toast('本轮已经窥视过了。'); return false; }
+      var quota = Game._peekQuota();
+      var used = s.peekUsed === true ? 1 : Math.round(numOr(s.peekUsed, 0));
+      if (used >= quota) { Game._toast('本轮已经窥视过了。'); return false; }
       if (slot == null || !s.doors[slot] || s.doors[slot].opened) return false;
-      s.peekUsed = true;
+      s.peekUsed = quota > 1 ? (used + 1) : true;
       s.doors[slot].peeked = true;
       var kind = kindOf(s.doors[slot].itemId);
       var text = kind === 'prize' ? '门缝里透出金光……这扇门里有值钱的东西。'
@@ -651,10 +1041,9 @@
           return Game.challenge();
 
         case CHOICES.SWITCH:
-          /* 契约 §2.1：换门失败（既没券、金币也不够）时「不换门，留在 DECIDE」，
-             不能被 reveal() 拖着进入开奖。 */
-          if (!Game.switchDoor()) return false;
-          return Game.reveal();
+          /* 契约 v6 §2.3：换门必须先弹出「重新选门」弹层，绝不能自动换门；
+             真正换门与开奖交给 chooseSwitch()（玩家选了 slot 之后）。 */
+          return Game.beginSwitch();
 
         case CHOICES.STICK:
           s.switchStreak = 0;
@@ -758,11 +1147,26 @@
         claim: res.claim || null,             // 契约 v3 §1.3：本轮被验证的线索
         grudgeLevel: s.grudge, delta: applied.delta
       };
+      /* 契约 v6 §2.2：质疑之后必须给出提示（无论识破还是猜错）。
+         优先用旁白层给的具体线索（res.hint / res.claim），拿不到就兜底一句话。 */
+      var claim = res.claim || null;
+      var hint = (typeof res.hint === 'string' && res.hint) ? res.hint : claimHintText(claim);
+      var truthful = claim ? claim.truthful !== false : !res.ok;
+      if (!hint) {
+        hint = truthful
+          ? '旁白这次说的是真话——信不信由你。'
+          : '旁白这次说的是假话——信不信由你。';
+      }
+      s.lastHint = {
+        text: hint,
+        truthful: truthful,
+        slot: (claim && claim.slot != null) ? claim.slot : null
+      };
       Game._render();
       Game._flashAll(applied.delta);
       Game._toast(res.text || (res.ok ? '你抓住了旁白的破绽。' : '旁白笑了：你猜错了。'));
 
-      if (s.patience <= 0) { Game.gameOver(); return true; }
+      if (s.patience <= 0 && !Game._deathSave()) { Game.gameOver(); return true; }
       var special = narrator.special ? narrator.special(s, 'challenge') : null;
       if (special) Game._playLine(special);
       return true;
@@ -796,12 +1200,13 @@
         var owned = instant ? (((s.shopBought || {})[d.id]) || 0) : Game._itemCount(d.id);
         // 续命符：耐心已到天花板时不给买（否则花 60 金币买一次空操作）
         var patienceFull = instant && d.id === 'patience_charm' && s.patience >= patienceCapOf(d);
+        var price = priceAfterDiscount(d.price);   // 契约 v6 §2.4：熟客折扣
         return {
-          id: d.id, name: d.name, price: d.price, desc: d.desc, icon: d.icon || d.id,
+          id: d.id, name: d.name, price: price, basePrice: d.price, desc: d.desc, icon: d.icon || d.id,
           kind: instant ? 'instant' : 'bag', immediate: instant, unlimited: unlimited,
           owned: owned,
           cap: cap === Infinity ? null : cap,     // null = 不限购（神秘盒）
-          affordable: s.coins >= d.price,
+          affordable: s.coins >= price,
           capped: patienceFull || owned >= cap
         };
       });
@@ -830,6 +1235,7 @@
       }
       var instant = shopInstant(def);
       var cap = shopCap(def);
+      var price = priceAfterDiscount(def.price);   // 契约 v6 §2.4：熟客折扣
       // 背包商品看 items；即时商品（购买即结算、不进背包）看 shopBought 计数，两者都要吃单局限购
       var ownedBought = instant ? (((s.shopBought || {})[id]) || 0) : Game._itemCount(id);
       if (ownedBought >= cap) {
@@ -839,19 +1245,19 @@
         return { ok: false, reason: 'cap' };
       }
       if (instant && id === 'patience_charm' && s.patience >= patienceCapOf(def)) {
-        Game._toast('耐心已经满了（最多 ' + patienceCapOf(def) + ' 点），这 ' + def.price + ' 金币先省着。');
+        Game._toast('耐心已经满了（最多 ' + patienceCapOf(def) + ' 点），这 ' + price + ' 金币先省着。');
         return { ok: false, reason: 'cap' };
       }
-      if (s.coins < def.price) {
-        Game._toast('金币不够：' + def.name + '要 ' + def.price + '，现在只有 ' + s.coins + '。');
+      if (s.coins < price) {
+        Game._toast('金币不够：' + def.name + '要 ' + price + '，现在只有 ' + s.coins + '。');
         return { ok: false, reason: 'insufficient' };
       }
 
       if (instant) {
         /* 即时道具：购买当场结算（同种子可复现；扣款与结算分两步，便于测试与文案拆分）。 */
-        var paid = Game._apply({ id: 'shop_buy', label: def.name, coins: -def.price }, { multiplier: 1, source: 'shop' });
+        var paid = Game._apply({ id: 'shop_buy', label: def.name, coins: -price }, { multiplier: 1, source: 'shop' });
         s = paid.state;
-        s.spentCoins = (s.spentCoins || 0) + def.price;
+        s.spentCoins = (s.spentCoins || 0) + price;
         s.shopBuys = (s.shopBuys || 0) + 1;
         s.shopBought = s.shopBought || {};
         s.shopBought[id] = ownedBought + 1;
@@ -864,15 +1270,15 @@
         }
       } else {
         var applied = Game._apply(
-          { id: 'shop_buy', label: def.name, coins: -def.price, items: [{ id: id, count: 1 }] },
+          { id: 'shop_buy', label: def.name, coins: -price, items: [{ id: id, count: 1 }] },
           { multiplier: 1, source: 'shop' }
         );
         s = applied.state;
-        s.spentCoins = (s.spentCoins || 0) + def.price;
+        s.spentCoins = (s.spentCoins || 0) + price;
         s.shopBuys = (s.shopBuys || 0) + 1;
-        Game._toast('买到 ' + def.name + '（−' + def.price + ' 金币），去背包里用。');
+        Game._toast('买到 ' + def.name + '（−' + price + ' 金币），去背包里用。');
       }
-      Game._emitter.emit({ type: 'buy', id: id, price: def.price, state: Game.state });
+      Game._emitter.emit({ type: 'buy', id: id, price: price, state: Game.state });
       Game._render();
       return { ok: true, reason: '' };
     },
@@ -915,6 +1321,310 @@
       return { ok: false, reason: 'noop' };
     },
 
+    /* ------------------------------ 契约 v6：钱包 / 升级 / 难度 / 首页 / 换门 */
+
+    /** 契约 §2.4：本机持久金币余额（结算/死亡后保存；首页展示）。 */
+    wallet: function () {
+      var store = storeRef();
+      if (!store || typeof store.loadWallet !== 'function') return 0;
+      var n = 0;
+      try { n = store.loadWallet(); } catch (e) { n = 0; }
+      n = Math.round(numOr(n, 0));
+      return n < 0 ? 0 : n;
+    },
+
+    /** 保存钱包（幂等；结算/死亡时调用）。 */
+    saveWallet: function (n) {
+      var v = Math.round(numOr(n, 0));
+      if (v < 0) v = 0;
+      var store = storeRef();
+      if (store && typeof store.saveWallet === 'function') {
+        try { store.saveWallet(v); } catch (e) { /* 静默：坏存档不阻塞游戏 */ }
+      }
+      return v;
+    },
+
+    /** 花钱包里的金币；不足返回 false 且不改档。 */
+    spendWallet: function (n) {
+      var cost = Math.round(numOr(n, 0));
+      if (cost < 0) cost = 0;
+      var cur = Game.wallet();
+      if (cur < cost) return false;
+      Game.saveWallet(cur - cost);
+      return true;
+    },
+
+    /** 本局结算时把 state.coins 存进钱包（每局一次，state.walletSaved 幂等标记）。 */
+    _bankRun: function () {
+      var s = Game.state;
+      if (!s) return Game.wallet();
+      if (s.walletSaved) return Game.wallet();
+      s.walletSaved = true;
+      return Game.saveWallet(s.coins);
+    },
+
+    /** 已购升级等级表 {id: level}。 */
+    upgradeLevels: function () { return upgradeLevelsMap(); },
+
+    /** 契约 §2.4：升级列表（供首页「升级商店」渲染）。 */
+    upgrades: function () {
+      var levels = upgradeLevelsMap();
+      var wallet = Game.wallet();
+      return upgradeTable().map(function (u) {
+        var lv = levels[u.id] || 0;
+        var max = upgradeMaxLevel(u);
+        var eff = upgradeEffectOf(u);
+        var cost = upgradeCostOf(u, lv);
+        return {
+          id: u.id, name: u.name || u.id, desc: u.desc || '',
+          cost: cost, maxLevel: max, level: lv,
+          effect: eff, maxed: lv >= max, affordable: wallet >= cost,
+          wallet: wallet
+        };
+      });
+    },
+
+    /** 买一级升级。返回 { ok, reason }；reason ∈ '' | unknown | max | insufficient。 */
+    buyUpgrade: function (id) {
+      var u = upgradeDef(id);
+      if (!u) return { ok: false, reason: 'unknown' };
+      var levels = upgradeLevelsMap();
+      var lv = levels[id] || 0;
+      var max = upgradeMaxLevel(u);
+      if (lv >= max) {
+        Game._toast((u.name || id) + '已经满级了。');
+        return { ok: false, reason: 'max' };
+      }
+      var cost = upgradeCostOf(u, lv);
+      var cur = Game.wallet();
+      if (cur < cost) {
+        Game._toast('金币不够：' + (u.name || id) + '要 ' + cost + '，钱包里只有 ' + cur + '。');
+        return { ok: false, reason: 'insufficient' };
+      }
+      var next = {};
+      for (var k in levels) {
+        if (Object.prototype.hasOwnProperty.call(levels, k)) next[k] = levels[k];
+      }
+      next[id] = lv + 1;
+      var store = storeRef();
+      if (store) {
+        Game.saveWallet(cur - cost);
+        if (typeof store.saveUpgrades === 'function') {
+          try { store.saveUpgrades(next); } catch (e) { /* 静默 */ }
+        }
+      }
+      Game._toast('升级成功：' + (u.name || id) + ' Lv.' + (lv + 1) + '（−' + cost + ' 金币）');
+      Game._render();
+      Game._emitter.emit({ type: 'upgrade', id: id, level: lv + 1, cost: cost, wallet: Game.wallet() });
+      return { ok: true, reason: '', id: id, level: lv + 1, cost: cost, wallet: Game.wallet() };
+    },
+
+    /** 契约 §2.4：当前难度 id。 */
+    difficulty: function () { return currentDifficultyId(); },
+
+    /** 契约 §2.4：三档难度（首页展示 + 选中态）。 */
+    difficultyList: function () {
+      return DIFFICULTY_IDS.map(function (id) {
+        var d = difficultyDef(id);
+        return { id: d.id, name: d.name, desc: d.desc, lieBase: d.lieBase, coins: d.coins, suspicion: d.suspicion, patience: d.patience, reward: d.reward };
+      });
+    },
+
+    /** 切换难度（本机偏好；IDLE 时立即生效，局内切换从下一局开始）。 */
+    setDifficulty: function (id) {
+      if (DIFFICULTY_IDS.indexOf(id) < 0) return false;
+      Game.savePref('difficulty', id);
+      if (Game.state) Game.state.difficulty = id;
+      Game._render();
+      Game._emitter.emit({ type: 'difficulty', id: id });
+      return true;
+    },
+
+    /** 契约 §2.5：首页剧情（data/config.json.story 优先，缺失用内置 3 段）。 */
+    story: function () { return storyHtml(); },
+
+    /** 首页 spec：标题 / 剧情 / 钱包 / 难度 / 升级（ui 只渲染）。 */
+    homeSpec: function () {
+      return {
+        kind: 'home',
+        title: '命运之门',
+        story: storyHtml(),
+        coins: Game.wallet(),
+        difficulty: currentDifficultyId(),
+        difficulties: Game.difficultyList(),
+        upgrades: Game.upgrades()
+      };
+    },
+
+    /** 回到首页（IDLE）。可从结算页 / 死亡页 / 对局中返回。 */
+    home: function () {
+      Game._clearTimers();
+      Game._generation++;
+      Game._endingModal = null;
+      var ui = Game._ui();
+      Game._safe(function () { if (ui.closeModal) ui.closeModal(); });
+      var mode = (Game.state && Game.state.mode) ? Game.state.mode : MODES.DEMO;
+      Game.state = Game._freshState(mode, null);
+      Game.state.phase = STATES.IDLE;
+      if (root.document && root.document.body) {
+        root.document.body.setAttribute('data-state', STATES.IDLE);
+      }
+      Game._render();
+      Game._emitter.emit({ type: 'state', state: Game.state });
+      return true;
+    },
+
+    /** 升级商店弹层（首页按钮 / 死亡页「用金币继续」都走这里）。 */
+    openUpgrade: function () {
+      var ui = Game._ui();
+      var items = Game.upgrades();
+      var body = '<p>钱包余额：<b>' + Game.wallet() + '</b> 金币（每局结算后自动存入）。</p>';
+      var spec = {
+        kind: 'upgrade',
+        title: '升级商店',
+        body: body,
+        coins: Game.wallet(),
+        items: items,
+        actions: items.map(function (u) {
+          return { label: u.name + (u.maxed ? '（满级）' : ' Lv.' + (u.level + 1) + ' · ' + u.cost), choice: 'buy_upgrade:' + u.id, id: u.id };
+        }).concat([{ label: '关闭', choice: 'close' }])
+      };
+      if (ui.openModal) Game._safe(function () { ui.openModal(spec); });
+      Game._emitter.emit({ type: 'upgrade_shop', state: Game.state, spec: spec });
+      return true;
+    },
+
+    /** 契约 §2.2：当前提示文案（UI 的 .hint-claim 显示它）。 */
+    hintText: function () {
+      var s = Game.state;
+      if (!s || !s.lastHint) return '';
+      return s.lastHint.text || '';
+    },
+
+    /** 本轮免费窥视次数：1 + 第六感升级。 */
+    _peekQuota: function () {
+      var extra = Math.round(upgradeBonus('peek_plus'));
+      return 1 + (extra > 0 ? extra : 0);
+    },
+
+    /** 契约 §2.3：可换的目标门 slot 列表（不含当前门 / 已开 / 已翻）。 */
+    switchCandidates: function () {
+      var s = Game.state;
+      if (!s || !Array.isArray(s.doors)) return [];
+      return s.doors.filter(function (d) {
+        return d.slot !== s.pickedSlot && !d.opened && !d.revealed;
+      }).map(function (d) { return d.slot; });
+    },
+
+    /** 契约 §2.3：换门费用（含熟客折扣）。 */
+    switchCost: function () {
+      var cost = Number(economy().switchCost);
+      if (!isFinite(cost) || cost < 0) cost = DEFAULT_ECONOMY.switchCost;
+      return priceAfterDiscount(cost);
+    },
+
+    /**
+     * 契约 §2.3：开始换门 = 弹出「重新选门」弹层（绝不自动换门）。
+     * 仅 DECIDE、本轮未换过、有候选门时可用。返回 { ok, candidates, cost }。
+     */
+    beginSwitch: function () {
+      var s = Game.state;
+      if (!s || s.phase !== STATES.DECIDE) {
+        Game._toast('换门只能在决策阶段。');
+        return { ok: false, reason: 'phase', candidates: [], cost: Game.switchCost() };
+      }
+      if (s.flags.switchPick) return { ok: false, reason: 'open', candidates: Game.switchCandidates(), cost: Game.switchCost() };
+      if (s.switchedThisRound) {
+        Game._toast('这一轮已经换过门了。');
+        return { ok: false, reason: 'used', candidates: [], cost: Game.switchCost() };
+      }
+      var candidates = Game.switchCandidates();
+      if (!candidates.length) {
+        Game._toast('没有可以换的门了。');
+        return { ok: false, reason: 'no-candidate', candidates: [], cost: Game.switchCost() };
+      }
+      var cost = Game.switchCost();
+      var ticket = Game._itemCount('switch_ticket');
+      s.flags.switchPick = true;
+      Game._render();
+      var ui = Game._ui();
+      var body = '<p>换门要付 <b>' + (ticket > 0 ? '1 张换门券' : cost + ' 金币') + '</b>，挑一扇新门：</p>';
+      if (ui.openModal) {
+        Game._safe(function () {
+          ui.openModal({
+            kind: 'switch',
+            title: '换到哪扇门？',
+            body: body,
+            candidates: candidates,
+            cost: cost,
+            ticket: ticket,
+            actions: candidates.map(function (slot) {
+              return { label: (slot + 1) + ' 号门', choice: 'switch:' + slot, slot: slot };
+            }).concat([{ label: '算了，不换', choice: 'cancel_switch' }])
+          });
+        });
+      }
+      Game._emitter.emit({ type: 'switch_begin', state: Game.state, candidates: candidates, cost: cost, ticket: ticket });
+      return { ok: true, candidates: candidates, cost: cost, ticket: ticket };
+    },
+
+    /** 契约 §2.3：玩家在「重新选门」弹层里选了 slot → 扣费、换门、开奖。非法 slot 拒绝。 */
+    chooseSwitch: function (slot) {
+      var s = Game.state;
+      if (!s || s.phase !== STATES.DECIDE) return false;
+      if (!s.flags.switchPick) { Game._toast('现在没有在选门。'); return false; }
+      var n = Math.round(numOr(slot, -1));
+      var candidates = Game.switchCandidates();
+      if (candidates.indexOf(n) < 0) {
+        Game._toast('这扇门不能换。');
+        return false;
+      }
+      var cost = Game.switchCost();
+      var ticket = Game._itemCount('switch_ticket');
+      if (ticket > 0) {
+        Game._consumeItem('switch_ticket', 1);
+      } else if (s.coins >= cost) {
+        Game._apply({ id: 'shop_switch', label: '换门', coins: -cost }, { multiplier: 1, source: 'shop' });
+      } else {
+        Game._toast('换门需要 ' + cost + ' 金币或一张换门券（现在只有 ' + Game.state.coins + ' 金币）。');
+        return false;
+      }
+      var cur = Game.state;
+      cur.pickedSlot = n;
+      cur.switchStreak = (cur.switchStreak || 0) + 1;
+      cur.switchedThisRound = true;
+      cur.flags.switchPick = false;
+      Game._closeModal();
+      Game._toast('换到 ' + (n + 1) + ' 号门' + (ticket > 0 ? '（消耗换门券）' : '（−' + cost + ' 金币）'));
+      return Game.reveal();
+    },
+
+    /** 契约 §2.3：取消换门 —— 只关弹层，回到 DECIDE（不扣费、不换门）。 */
+    cancelSwitch: function () {
+      var s = Game.state;
+      var was = !!(s && s.flags.switchPick);
+      if (s) s.flags.switchPick = false;
+      Game._closeModal();
+      Game._render();
+      if (was) Game._toast('没换门，留在决策。');
+      return true;
+    },
+
+    /** 契约 §2.4：死亡保险 —— 每局一次，耐心归零时改为金币清零并继续。 */
+    _deathSave: function () {
+      var s = Game.state;
+      if (!s) return false;
+      if (s.deathInsuranceUsed) return false;
+      if (!upgradeLevelsMap().death_insurance) return false;
+      s.deathInsuranceUsed = true;
+      s.patience = 1;
+      s.coins = 0;
+      s.dead = false;
+      Game._toast('死亡保险生效：金币清零，你活了下来。');
+      Game._render();
+      return true;
+    },
+
     /* -------------------------------------------------------------- 开奖 */
 
     /** 翻门开奖：结算 → 动画 → 本轮结算页。flags.revealLocked 防止重复结算。 */
@@ -927,6 +1637,9 @@
       if (slot == null || !s.doors[slot]) { Game._warn('无有效选门'); return false; }
       var itemId = s.doors[slot].itemId;
       var multiplier = s.doubled ? 2 : 1;
+      /* 契约 v6 §2.4：难度奖励倍率只放大「赚到的金币」，不放大惩罚。 */
+      var rewardMul = numOr(s.rewardMul, 1);
+      if (!(rewardMul > 0)) rewardMul = 1;
 
       // 状态机只能由 game.js 迁移：内容层（applyEffect）在耐心归零时会顺手写
       // phase='GAME_OVER'，那会让下面的 setState(REVEAL) 被 ALLOWED 拒绝、
@@ -934,6 +1647,23 @@
       // 死亡判定仍由 settleRound 的 patience<=0 分支负责。
       var prevPhase = s.phase;
       var applied = Game._apply(itemId, { multiplier: multiplier, source: 'reveal' });
+      var delta = applied.delta || {};
+      var events = applied.events || [];
+      if (rewardMul !== 1 && delta.coins > 0) {
+        var bonus = Math.round(delta.coins * (rewardMul - 1));
+        if (bonus > 0) {
+          var boosted = Game._apply({ id: 'difficulty_reward', label: '难度奖励', coins: bonus }, { multiplier: 1, source: 'reveal' });
+          delta = {
+            coins: delta.coins + bonus,
+            suspicion: delta.suspicion || 0,
+            patience: delta.patience || 0
+          };
+          applied.state = boosted.state || applied.state;
+          events = events.concat(boosted.events || []);
+        }
+      }
+      applied.delta = delta;
+      applied.events = events;
       s = applied.state;
       s.phase = prevPhase;
       Game.state = s;
@@ -985,7 +1715,7 @@
         else if (s.emptyStreak >= 3) special = narrator.special(s, 'empty3');
       }
 
-      if (s.patience <= 0) { Game.gameOver(); return result; }
+      if (s.patience <= 0 && !Game._deathSave()) { Game.gameOver(); return result; }
 
       var next = function () {
         if (special) { Game._playLine(special); }
@@ -1055,7 +1785,11 @@
       if (!endingLine) endingLine = Game._settleLineFor('cashout');
       s.settleLine = (endingLine && endingLine.text) ? endingLine.text : null;
       if (s.codex.endings.indexOf(ending.title) < 0) s.codex.endings.push(ending.title);
-      var body = '<p class="big">最终金币：<b>' + s.coins + '</b></p>' +
+      /* 契约 v6 §2.4：结算时把本局金币存进钱包（幂等，一局只存一次）。 */
+      Game._bankRun();
+      var wallet = Game.wallet();
+      var body = '<p class="muted">你带着金币离开——这些金币已存入钱包（<b>' + wallet + '</b>），可去「升级商店」花掉。</p>' +
+        '<p class="big">最终金币：<b>' + s.coins + '</b></p>' +
         '<p>闯到第 <b>' + s.round + '</b> 轮</p>' +
         '<p>称号：<b>' + rating.title + '</b></p>' +
         '<p>结局：<b>' + ending.title + '</b>' + (ending.desc ? '（' + ending.desc + '）' : '') + '</p>' +
@@ -1072,7 +1806,7 @@
       Game._checkAchievements();
       var ui = Game._ui();
       Game._endingModal = {
-        kind: 'cashout', title: '本局结算', body: body, ending: ending,
+        kind: 'cashout', title: '活下来了', body: body, ending: ending,
         actions: [
           { label: '再来一局', choice: 'restart', primary: true },
           { label: '复制种子', choice: 'save_seed' },
@@ -1088,19 +1822,25 @@
       return Game.state;
     },
 
-    /** 耐心归零结算。 */
+    /** 耐心归零结算（契约 v6 §2.5：这是一次「死亡」，不只是本局结束）。 */
     gameOver: function () {
       var s = Game.state;
       Game._clearTimers();
       Game.setState(STATES.GAME_OVER);
-      /* 契约 v3 §4.2：失败局同样给结局（通常是「被旁白 PUA」或兜底）。 */
+      s.dead = true;
+      /* 契约 v3 §4.2：失败局同样给结局（契约 v6 新增 death 结局，优先级最高）。 */
       s.endingId = Game.computeEndingId(s);
       var ending = Game.endingSpec(s.endingId);
       if (s.codex.endings.indexOf(ending.title) < 0) s.codex.endings.push(ending.title);
       var bustLine = Game._settleLineFor('bust');
       s.settleLine = (bustLine && bustLine.text) ? bustLine.text : null;
-      var body = '<p>耐心归零，旁白赢了这一局。</p>' +
-        '<p>你在第 <b>' + s.round + '</b> 轮被劝退，手里还剩 <b>' + s.coins + '</b> 金币。</p>' +
+      /* 契约 v6 §2.4：死亡也把本局金币存进钱包（幂等），攒钱升级下一局买命。 */
+      Game._bankRun();
+      var wallet = Game.wallet();
+      var body = '<p class="big">你死了。</p>' +
+        '<p>你没能撑过去……旁白最后看了你一眼，什么都没说。</p>' +
+        '<p>你倒在第 <b>' + s.round + '</b> 轮，手里还剩 <b>' + s.coins + '</b> 金币（已存入钱包：<b>' + wallet + '</b>）。</p>' +
+        '<p class="muted">耐心归零，旁白赢了这一局。</p>' +
         '<p>结局：<b>' + ending.title + '</b>' + (ending.desc ? '（' + ending.desc + '）' : '') + '</p>' +
         '<p class="muted">种子：<b>' + Game.seedTag() + '</b></p>' +
         '<p class="fine">游戏内金币纯属娱乐，非真实货币。</p>';
@@ -1110,11 +1850,10 @@
       Game._checkAchievements();
       var ui = Game._ui();
       Game._endingModal = {
-        kind: 'gameover', title: '耐心归零', body: body, ending: ending,
+        kind: 'gameover', title: '你死了', body: body, ending: ending,
         actions: [
-          { label: '再来一局', choice: 'restart', primary: true },
-          { label: '复制种子', choice: 'save_seed' },
-          { label: '看图鉴', choice: 'codex' }
+          { label: '用金币继续（升级商店）', choice: 'upgrade_shop', primary: true },
+          { label: '重新挑战', choice: 'restart' }
         ]
       };
       if (ui.openModal) {
@@ -1165,7 +1904,24 @@
             if (ui.openModal) Game._safe(function () { ui.openModal(Game._endingModal); });
           }
           return true;
+        /* ---- 契约 v6：首页 / 升级 / 换门弹层 ---- */
+        case 'upgrade_shop':
+          return Game.openUpgrade();
+        case 'home':
+        case 'home_start':
+          return Game.home();
+        case 'cancel_switch':
+          return Game.cancelSwitch();
         default:
+          if (typeof choice === 'string' && choice.indexOf('switch:') === 0) {
+            return Game.chooseSwitch(parseInt(choice.slice(7), 10));
+          }
+          if (typeof choice === 'string' && choice.indexOf('buy_upgrade:') === 0) {
+            var up = Game.buyUpgrade(choice.slice(12));
+            /* 升级成功就刷新弹层（钱包与等级都变了）；失败只 toast，弹层留着。 */
+            if (up.ok) Game.openUpgrade();
+            return up.ok;
+          }
           if (typeof choice === 'string' && choice.indexOf('persona:') === 0) {
             Game.setPersonality(choice.slice(8));
             return Game.openSettings();
@@ -1195,37 +1951,117 @@
     /* ------------------------------------------------------------ 纯函数区 */
 
     /**
-     * 发牌（阶段 1 验收：1 大奖 / 1 空门 / 1 小奖；阶段 2 起走权重池）。
-     * 不变量：恰好 ≤1 个 big_prize，且至少 1 扇「非大奖」门，保证主持人永远有门可开。
-     * 契约 v5：门数由 Game.doorCountFor 决定（3–6）；4–6 门保证恰好 1 扇大奖。
+     * 发牌（契约 v6 §2.1 不变量）：
+     *   - 每局至少 2 扇空门（kind==='no-prize'），且恰好 ≤1 扇大奖；
+     *   - 3 门 = 大奖 + 空门 + 空门（3 门不再出小奖，小奖从 4 门起）；
+     *   - 4–6 门 = 大奖 + 至少 2 空门 + 其余按权重池抽取（不超过 1 扇大奖）；
+     *   - 演示剧本只决定「口味」，同样经过不变量修正（条款见 _enforceDoorInvariants）。
+     * 不变量保证主持人永远有「空门」可开：3 门时玩家最多拿走 1 扇空门。
      */
     generateDoors: function (round) {
       var s = Game.state;
       var rng = s.rng;
-      var ids;
       var script = Game.script();
       var n = (s && s.doorCount != null) ? clampDoorCount(s.doorCount) : Game.doorCountFor(round);
-      if (script && Array.isArray(script.doors) && script.doors.length) {
+      var ids;
+      var scripted = !!(script && Array.isArray(script.doors) && script.doors.length);
+      if (scripted) {
         ids = script.doors.slice();
-      } else if (round <= 1) {
-        ids = RNG.shuffle(rng, ['big_prize', 'small_prize', 'empty']);
-        /* 第 1 轮多出来的门只放空门/小奖（新手保护：第 1 轮不开出炸弹）。 */
-        while (ids.length < n) ids.push(RNG.int(rng, 0, 99) < 60 ? 'empty' : 'small_prize');
-        ids = RNG.shuffle(rng, ids);
+      } else if (n <= 3) {
+        ids = ['big_prize', 'empty', 'empty'];
       } else {
-        ids = Game._drawPool(round, n);
+        ids = ['big_prize', 'empty', 'empty'];
+        ids = ids.concat(Game._drawExtra(round, n - 3, n));
       }
-      /* 契约 v5：4–6 门的回合保证恰好 1 扇大奖，否则门越多期望越差；3 门沿用旧行为（≤1）。 */
-      if (ids.length > 3 && ids.indexOf('big_prize') < 0) {
-        var idx = -1;
-        for (var i = 0; i < ids.length; i++) {
-          if (isNoPrize(ids[i]) || kindOf(ids[i]) === 'hazard') { idx = i; break; }
+      if (scripted) {
+        /* 剧本牌面是数据层写好的「口味」：位置有意义（hostOpensSlot 指向某扇门），
+           所以不洗牌；只做最低限度的安全修正（门数、≤1 大奖、≥1 空门）。 */
+        while (ids.length < n) ids.push('empty');
+        if (ids.length > n) ids = ids.slice(0, n);
+        var tops = 0, empt = 0;
+        ids.forEach(function (id) {
+          if (isTopPrize(id)) tops++;
+          if (isNoPrize(id)) empt++;
+        });
+        for (var si = 0; si < ids.length && tops > 1; si++) {
+          if (isTopPrize(ids[si])) { ids[si] = 'empty'; tops--; empt++; }
         }
-        ids[idx >= 0 ? idx : ids.length - 1] = 'big_prize';
+        for (var sj = 0; sj < ids.length && empt < 1; sj++) {
+          if (!isNoPrize(ids[sj]) && !isTopPrize(ids[sj])) { ids[sj] = 'empty'; empt++; }
+        }
+      } else {
+        ids = Game._enforceDoorInvariants(ids, n);
+        ids = RNG.shuffle(rng, ids);
       }
-      return ids.map(function (id, i) {
+      var out = ids.map(function (id, i) {
         return { slot: i, itemId: id, opened: false, revealed: false };
       });
+      Game._lastDeal = out;
+      return out;
+    },
+
+    /**
+     * 契约 v6 §2.1：4–6 门的「其余门」从权重池抽；排除大奖（大奖已固定 1 扇）。
+     */
+    _drawExtra: function (round, k, doors) {
+      var s = Game.state;
+      var data = Game.deps.data;
+      var out = [];
+      var guard = 0;
+      while (out.length < k && guard++ < 200) {
+        var pool = (data && typeof data.poolForRound === 'function')
+          ? data.poolForRound(round, doors)
+          : Game._fallbackPool(round);
+        var usable = pool.filter(function (e) {
+          var id = e && e.id ? e.id : e;
+          return !isTopPrize(id) && out.indexOf(id) < 0;
+        });
+        if (!usable.length) break;
+        var chosen = RNG.weighted(s.rng, usable, function (e) { return e.weight; });
+        var id = (chosen && chosen.id) ? chosen.id : chosen;
+        if (id == null || isTopPrize(id) || out.indexOf(id) >= 0) continue;
+        out.push(id);
+      }
+      while (out.length < k) out.push('empty');
+      return out;
+    },
+
+    /**
+     * 契约 v6 §2.1：把任意牌面修正到满足发牌不变量。
+     * 修正顺序：补足门数 → 多出的大奖换空门 → 没有大奖就补 1 扇 →
+     * 空门不足 2 扇时，优先把危害门换成空门，其次把奖项换成空门。
+     */
+    _enforceDoorInvariants: function (ids, n) {
+      var out = (ids || []).slice();
+      var i;
+      while (out.length < n) out.push('empty');
+      if (out.length > n) out = out.slice(0, n);
+
+      /* 恰好 ≤1 扇大奖。 */
+      var topSeen = 0;
+      for (i = 0; i < out.length; i++) {
+        if (!isTopPrize(out[i])) continue;
+        topSeen++;
+        if (topSeen > 1) out[i] = 'empty';
+      }
+      /* 至少 1 扇大奖（保证每局都有终极目标）。 */
+      if (topSeen === 0 && out.length) {
+        var topIdx = -1;
+        for (i = 0; i < out.length; i++) { if (isNoPrize(out[i])) { topIdx = i; break; } }
+        if (topIdx >= 0) out[topIdx] = 'big_prize';
+      }
+      /* 至少 2 扇空门。 */
+      var empties = out.filter(function (id) { return isNoPrize(id); }).length;
+      for (i = 0; i < out.length && empties < 2; i++) {
+        if (isNoPrize(out[i]) || isTopPrize(out[i])) continue;
+        if (kindOf(out[i]) === 'hazard') { out[i] = 'empty'; empties++; }
+      }
+      for (i = 0; i < out.length && empties < 2; i++) {
+        if (isNoPrize(out[i]) || isTopPrize(out[i])) continue;
+        out[i] = 'empty';
+        empties++;
+      }
+      return out;
     },
 
     /**
@@ -1267,7 +2103,7 @@
       var guard = 0;
       while (picks.length < n && guard++ < 200) {
         var pool = (data && typeof data.poolForRound === 'function')
-          ? data.poolForRound(round)
+          ? data.poolForRound(round, n)
           : Game._fallbackPool(round);
         var usable = pool.filter(function (e) { return picks.indexOf(e.id) < 0; });
         if (!usable.length) break;
@@ -1302,26 +2138,55 @@
     },
 
     /**
-     * 主持人开门规则（冻结）：
-     * 只在「未被玩家选中」的门里挑，且不开出大奖；优先空门，其次其他非大奖门。
-     * 因为场上最多一扇大奖，这个集合恒非空 —— 主持人永远有门可开。
+     * 主持人开门规则（契约 v6 §2.1 冻结）：
+     * 只从「kind==='no-prize'（空门）且未被玩家选中、未开」的门里挑，RNG 均匀、同种子可复现。
+     * 发牌不变量保证这个集合在正常牌面上恒非空（每局 ≥2 扇空门）。
+     * 退化牌面（数据层给的剧本/异常牌面）才依次放宽到「非大奖门」→「任意未开门」，但绝不开玩家所选的门。
+     * 兼容调用方式：hostPick(doors, pickedSlot) 或 hostPick(state)。
      */
-    hostPick: function (doors, pickedSlot) {
-      var cands = (doors || []).filter(function (d) {
-        return d.slot !== pickedSlot && !isTopPrize(d.itemId);
-      });
-      if (!cands.length) {
-        cands = (doors || []).filter(function (d) { return d.slot !== pickedSlot; });
+    hostPick: function (state) {
+      var st = null;
+      var list = [];
+      var pickedSlot = null;
+      if (Array.isArray(state)) {
+        /* 兼容旧调用 hostPick(doors, pickedSlot)（旧测试/外部调用），新代码请传 state。 */
+        list = state;
+        pickedSlot = arguments[1];
+        st = Game.state || null;
+      } else {
+        st = state || Game.state || null;
+        list = (st && Array.isArray(st.doors)) ? st.doors : [];
+        pickedSlot = st ? st.pickedSlot : null;
+        /* 防御：state 尚未发牌时（纯函数调用场景）用最近一次发牌结果/临时发牌，
+           保证「主持人恒有门可开」。 */
+        if (!list.length) {
+          var last = Game._lastDeal;
+          if (Array.isArray(last) && last.length) {
+            list = last;
+            if (st) st.doors = last;
+          } else {
+            list = Game.generateDoors(st && st.round ? st.round : 1);
+            if (st) st.doors = list;
+          }
+        }
       }
-      if (!cands.length) return null;
-      var rank = function (d) {
-        var k = kindOf(d.itemId);
-        if (k === 'no-prize') return 0;
-        if (k === 'hazard') return 1;
-        return 2;
+      var rng = (st && st.rng) ? st.rng : (Game.state && Game.state.rng);
+      var pickOne = function (arr) {
+        if (!arr.length) return null;
+        if (rng && typeof RNG.pick === 'function') return RNG.pick(rng, arr).slot;
+        return arr[0].slot;
       };
-      var best = cands.slice().sort(function (a, b) { return rank(a) - rank(b); });
-      return best[0].slot;
+      var open = function (d) { return !d.opened && !d.revealed; };
+      var legal = list.filter(function (d) {
+        return d.slot !== pickedSlot && open(d) && isNoPrize(d.itemId);
+      });
+      if (legal.length) return pickOne(legal);
+      var nonTop = list.filter(function (d) {
+        return d.slot !== pickedSlot && open(d) && !isTopPrize(d.itemId);
+      });
+      if (nonTop.length) return pickOne(nonTop);
+      var any = list.filter(function (d) { return d.slot !== pickedSlot && open(d); });
+      return pickOne(any);
     },
 
     /* ------------------------------------------- 契约 v3：结局与提词器 */
@@ -1336,10 +2201,12 @@
       var table = cfg.endings || {};
       var initial = cfg.initial || {};
       var master = cfg.cashoutMaster || {};
-      var TIER = { all_in: 100, comeback: 90, iron_patience: 80, master: 70, pua: 60, euro: 50, anti: 40, normal: 0 };
+      var TIER = { death: 999, all_in: 100, comeback: 90, iron_patience: 80, master: 70, pua: 60, euro: 50, anti: 40, normal: 0 };
       var coins = s.coins || 0;
       var low = (s.minCoins == null) ? coins : s.minCoins;
       var conds = {
+        /* 契约 v6 §2.5：死亡结局优先级最高（数据层 endings.death 的 priority 会覆盖该值）。 */
+        death: s.phase === 'GAME_OVER' || s.dead === true,
         all_in: (s.challengesWon || 0) >= 3 && (s.challengesLost || 0) === 0,
         comeback: low <= 10 && coins >= 200,
         iron_patience: s.patience != null && initial.patience != null &&
@@ -1368,12 +2235,12 @@
     endingSpec: function (id) {
       var table = config().endings || {};
       var def = table[id] || null;
-      if (def) return { id: id, title: def.title || id, desc: def.desc || '', lineKind: def.lineKind || null };
+      if (def) return { id: id, title: def.title || id, desc: def.desc || '', lineKind: def.lineKind || (id === 'death' ? 'death' : null) };
       var fallback = {
-        all_in: '全识破', comeback: '绝地翻盘', iron_patience: '稳如老狗', master: '见好就收大师',
+        death: '你没撑过去', all_in: '全识破', comeback: '绝地翻盘', iron_patience: '稳如老狗', master: '见好就收大师',
         pua: '被旁白 PUA', euro: '欧皇候选', anti: '反杀旁白', normal: '普通赌徒'
       };
-      return { id: id, title: fallback[id] || id, desc: '', lineKind: null };
+      return { id: id, title: fallback[id] || id, desc: '', lineKind: id === 'death' ? 'death' : null };
     },
 
     /**
@@ -1769,7 +2636,7 @@
       return log;
     },
 
-    /** 清空全部本地数据（图鉴 / 最佳 / 统计 / 成就 / 偏好）。 */
+    /** 清空全部本地数据（图鉴 / 最佳 / 统计 / 成就 / 偏好 / 钱包 / 升级）。 */
     clearSave: function () {
       var store = Game._store();
       if (store && typeof store.clearAll === 'function') { try { store.clearAll(); } catch (e) { /* 静默 */ } }
@@ -1778,6 +2645,7 @@
         s.codex = { items: [], lines: [], endings: [] };
         s.achievements = [];
         s.stats = null;
+        s.lastHint = null;
         s.flags.onboarded = false;
       }
       Game._toast('本地数据已清空。');
@@ -1788,8 +2656,6 @@
     /* ------------------------------------------------------------ 内部工具 */
 
     _freshState: function (mode, seed) {
-      var cfg = config();
-      var res = cfg.initial || root.DEFAULT_RESOURCES;
       var prefs = prefsOf();
       if (seedPref != null) { mode = MODES.NORMAL; seed = seedPref; }   // 契约 v4 §6：?seed= 重放优先
       var demo = (mode !== MODES.NORMAL);
@@ -1797,7 +2663,15 @@
       var seedValue = demo
         ? ((data && data.seedDemo && data.seedDemo.seed) || root.DEMO_SEED)
         : (seed == null ? (Game.deps.now() >>> 0) : seed);
-      var st = createInitialState(mode, { seed: seedValue, resources: res, rehearsal: rehearsalPref });
+      /* 契约 v6 §2.4：开局资源 = 难度初值 + 已购升级加成（叠加，不替换）。 */
+      var diffId = currentDifficultyId();
+      var plan = resourcePlan(diffId);
+      var res = { coins: plan.coins, suspicion: plan.suspicion, patience: plan.patience };
+      var st = createInitialState(mode, {
+        seed: seedValue, resources: res, rehearsal: rehearsalPref,
+        difficulty: diffId, rewardMul: plan.rewardMul, peekFree: plan.peekFree
+      });
+      st.deathInsurance = plan.insurance === true;
       st.personality = personaOf(prefs.persona) ? prefs.persona : 'sarcastic';
       st.seedTag = seedTagOf(st.rng.seed);
       st.flags.onboarded = prefs.onboarded === true;

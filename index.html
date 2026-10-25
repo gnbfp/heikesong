@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>三扇门：别信旁白</title>
+<title>命运之门：别信旁白</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body data-state="IDLE">
@@ -11,7 +11,7 @@
   <!-- 顶部：轮次信息 + 常驻全局控制（阶段4 P1） -->
   <header id="topbar">
     <div class="brand">
-      <span class="brand-name">三扇门</span>
+      <span class="brand-name" id="brand">命运之门</span>
       <span class="brand-sub">别信旁白</span>
     </div>
     <div id="round-chip" class="chip">第 1 轮</div>
@@ -94,14 +94,27 @@
     <div id="bag-empty" class="bag-empty">背包空空如也</div>
   </section>
 
-  <!-- 开始遮罩（IDLE） -->
-  <section id="boot">
-    <h1 class="boot-title">三扇门</h1>
-    <p class="boot-sub">一扇大奖，一扇小奖，一扇空门。<br>旁白说的每一句话，都可能是谎。</p>
-    <div class="boot-actions">
-      <button type="button" id="btn-start" class="primary">开始（演示模式）</button>
-      <button type="button" id="btn-start-normal" class="ghost">普通模式</button>
+  <!-- 首页（IDLE）：标题 / 剧情 / 金币余额 / 难度三选一 / 升级商店入口（契约 v6 §4.1） -->
+  <section id="boot" class="home">
+    <h1 class="boot-title home-title">命运之门</h1>
+    <p class="boot-sub home-sub">三扇门，一句旁白。赌的是运气，赌注是命。</p>
+    <!-- 剧情 3 段由 ui.js 从 data/config.json 的 story 渲染（契约 §2.5/§4.1） -->
+    <div id="home-story" class="home-story"></div>
+    <div class="home-wallet">钱包金币 <b id="home-coins" class="home-coins">0</b></div>
+    <div id="difficulty" class="difficulty" role="group" aria-label="难度">
+      <button type="button" class="diff-btn" data-diff="normal" aria-pressed="true">普通</button>
+      <button type="button" class="diff-btn" data-diff="hard" aria-pressed="false">困难</button>
+      <button type="button" class="diff-btn" data-diff="hell" aria-pressed="false">地狱</button>
     </div>
+    <div class="boot-actions home-actions">
+      <button type="button" id="btn-start" class="primary">开始游戏</button>
+      <button type="button" id="btn-home-shop" class="ghost">升级商店</button>
+      <button type="button" id="btn-home-codex" class="ghost">图鉴</button>
+      <button type="button" id="btn-home-help" class="ghost">玩法</button>
+      <button type="button" id="btn-home-settings" class="ghost">设置</button>
+      <button type="button" id="btn-start-normal" class="ghost home-quick" title="跳过首页直接开普通模式">快速开始</button>
+    </div>
+    <p class="home-fine">金币纯属娱乐，非真实货币 · 零构建静态 Demo</p>
   </section>
 
   <!-- 结算 / 图鉴弹层 -->

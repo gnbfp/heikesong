@@ -88,13 +88,22 @@
     seedTag: null,                   // 本局种子标签（结算页展示 / 分享）
     achievements: [],                // 已解锁成就 id 列表（跨局持久）
     stats: null,                     // 统计档案对象（跨局持久，见 CodexStore.loadStats）
+
+    /* ---- 契约 v6 追加字段（首页 / 钱包 / 难度 / 换门选门） ---- */
+    difficulty: 'normal',            // 'normal' | 'hard' | 'hell'（首页选择，跨局记忆）
+    rewardMul: 1,                    // 难度奖励倍率（normal 1 / hard 1.5 / hell 2）
+    walletSaved: false,              // 本局金币是否已存入首页钱包（幂等标记）
+    lastHint: null,                  // 最近一次质疑产出的提示 { text, truthful, slot }
+    peekFree: 0,                     // 升级 peek_plus 带来的每轮额外窥视次数
+    deathInsuranceUsed: false,       // 升级 death_insurance：本局免死是否已用掉
     flags: {
       skipAnim: false,
       muted: false,
       revealLocked: false,
       speakerMuted: false,
       onboarded: false,              // 新手引导是否已完成
-      portraitWarned: false          // 竖屏降级提示是否已触发过
+      portraitWarned: false,         // 竖屏降级提示是否已触发过
+      switchPick: false              // 契约 v6 §2.3：DECIDE 内的「重新选门」子流程进行中
     }
   });
 
@@ -150,6 +159,14 @@
       roundResult: null,      // 本轮得失：{ itemId, coins, suspicion, patience, challenged }
       lastChallenge: null,    // 最近一次质疑结果（文案 + 判定）
       joinedAt: 0,            // 开局时间戳（结算页 / 计时用）
+
+      /* ---- 契约 v6 追加字段（首页 / 钱包 / 难度 / 换门选门） ---- */
+      difficulty: (typeof opts.difficulty === 'string' ? opts.difficulty : 'normal'),
+      rewardMul: (Number(opts.rewardMul) > 0 ? Number(opts.rewardMul) : 1),
+      walletSaved: false,
+      lastHint: null,
+      peekFree: Math.max(0, Math.round(Number(opts.peekFree) || 0)),
+      deathInsuranceUsed: false,
       flags: {
         skipAnim: false,
         muted: false,
@@ -157,7 +174,8 @@
         speakerMuted: false,
         rehearsal: opts.rehearsal === true,  // 契约 v3 §5.1：提词器（不写 localStorage，重置后保持）
         onboarded: false,
-        portraitWarned: false
+        portraitWarned: false,
+        switchPick: false
       }
     };
   };
@@ -279,7 +297,10 @@
     best: 'three_doors_best_v1',
     stats: 'three_doors_stats_v1',
     achievements: 'three_doors_achievements_v1',
-    prefs: 'three_doors_prefs_v1'
+    prefs: 'three_doors_prefs_v1',
+    /* 契约 v6 §2.4：首页钱包（跨局金币余额）+ 升级等级 */
+    wallet: 'three_doors_wallet_v1',
+    upgrades: 'three_doors_upgrades_v1'
   });
 
   function arr(v) { return Object.prototype.toString.call(v) === '[object Array]' ? v : []; }
@@ -391,6 +412,8 @@
         persona: typeof p.persona === 'string' ? p.persona : 'sarcastic',
         animationSpeed: typeof p.animationSpeed === 'string' ? p.animationSpeed : 'full',
         narrator: (p.narrator === 'slow' || p.narrator === 'fast') ? p.narrator : 'normal',
+        /* 契约 v6 §2.4：难度是本机偏好，必须落盘（漏了它 Game.setDifficulty 会静默失效） */
+        difficulty: (typeof p.difficulty === 'string' && p.difficulty) ? p.difficulty : 'normal',
         bgm: p.bgm !== false,
         sound: p.sound !== false,
         portraitWarned: p.portraitWarned === true,
@@ -405,6 +428,7 @@
         persona: typeof prefs.persona === 'string' ? prefs.persona : 'sarcastic',
         animationSpeed: typeof prefs.animationSpeed === 'string' ? prefs.animationSpeed : 'full',
         narrator: (prefs.narrator === 'slow' || prefs.narrator === 'fast') ? prefs.narrator : 'normal',
+        difficulty: (typeof prefs.difficulty === 'string' && prefs.difficulty) ? prefs.difficulty : 'normal',
         bgm: prefs.bgm !== false,
         sound: prefs.sound !== false,
         portraitWarned: prefs.portraitWarned === true,
@@ -412,10 +436,54 @@
       });
     },
     clearPrefs: function () { return drop(STORE_KEYS.prefs); },
-    /** 清空收集进度（图鉴 + 最佳成绩 + 统计 + 成就 + 偏好）。 */
+
+    /* ---- 契约 v6 §2.4：首页钱包（跨局金币余额）---- */
+    /** 读钱包余额；失败/缺失/负数 → 0。 */
+    loadWallet: function () {
+      var w = readJson(STORE_KEYS.wallet, {});
+      var n = Math.round(Number(w.coins != null ? w.coins : w.value));
+      if (!isFinite(n) || n < 0) n = 0;
+      return n;
+    },
+    saveWallet: function (coins) {
+      var n = Math.round(Number(coins));
+      if (!isFinite(n) || n < 0) n = 0;
+      return writeJson(STORE_KEYS.wallet, { coins: n });
+    },
+    clearWallet: function () { return drop(STORE_KEYS.wallet); },
+
+    /* ---- 契约 v6 §2.4：升级等级 { id: level }（白名单过滤由引擎负责）---- */
+    loadUpgrades: function () {
+      var u = readJson(STORE_KEYS.upgrades, {});
+      var src = (u.levels && typeof u.levels === 'object') ? u.levels : (u.upgrades && typeof u.upgrades === 'object') ? u.upgrades : u;
+      var out = {};
+      for (var id in src) {
+        if (!Object.prototype.hasOwnProperty.call(src, id)) continue;
+        var n = Math.round(Number(src[id]));
+        if (!isFinite(n) || n <= 0) continue;
+        out[id] = n;
+      }
+      return out;
+    },
+    saveUpgrades: function (levels) {
+      var out = {};
+      if (levels && typeof levels === 'object') {
+        for (var id in levels) {
+          if (!Object.prototype.hasOwnProperty.call(levels, id)) continue;
+          var n = Math.round(Number(levels[id]));
+          if (!isFinite(n) || n <= 0) continue;
+          out[id] = n;
+        }
+      }
+      return writeJson(STORE_KEYS.upgrades, { levels: out });
+    },
+    clearUpgrades: function () { return drop(STORE_KEYS.upgrades); },
+
+    /** 清空收集进度（图鉴 + 最佳成绩 + 统计 + 成就 + 偏好 + 钱包 + 升级）。 */
     clearAll: function () {
       var ok = false;
-      [STORE_KEYS.codex, STORE_KEYS.best, STORE_KEYS.stats, STORE_KEYS.achievements, STORE_KEYS.prefs].forEach(function (k) {
+      [STORE_KEYS.codex, STORE_KEYS.best, STORE_KEYS.stats, STORE_KEYS.achievements, STORE_KEYS.prefs,
+        STORE_KEYS.wallet, STORE_KEYS.upgrades].forEach(function (k) {
         if (drop(k)) ok = true;
       });
       return ok;
