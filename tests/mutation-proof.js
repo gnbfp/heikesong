@@ -252,10 +252,10 @@ record('复原 ⑦ 后 doors.js 的 G9.4 重新变绿', /\[PASS\] G9\.4/.test(d7
 
 /* ---------------- 变异 ⑧：演示剧本门数优先级失效 → doors.js 的 G9.10 变红 ---------------- */
 console.log('\n— 变异 ⑧：让 doorCountFor 忽略演示剧本（剧本优先失效） —');
-var anchor8 = 'if (s.mode !== MODES.NORMAL && script && Array.isArray(script.doors) && script.doors.length) {';
-var t8 = gameOrig.replace(anchor8, 'if (false) {');
+var anchor8 = 'return clampDoorCount(script.doors.length);';
+var t8 = gameOrig.replace(anchor8, 'return 6;   /* MUTANT：剧本门数优先被改成固定 6 */');
 fs.writeFileSync(gamePath, t8, 'utf8');
-record('变异 ⑧ 已生效（剧本门数分支被短路）', t8 !== gameOrig, '锚点替换=' + (t8 !== gameOrig));
+record('变异 ⑧ 已生效（演示剧本门数优先被改写为 6）', t8 !== gameOrig, '锚点替换=' + (t8 !== gameOrig));
 var d8 = runNode([path.join(copy, 'tests', 'doors.js')], copy);
 record('变异 ⑧ doors.js 退出码 ≠ 0 且点名 G9.10', d8.code !== 0 && /\[FAIL\] G9\.10/.test(d8.out),
   'exit=' + d8.code + '｜' + lineOf(d8.out, '\\[FAIL\\] G9\\.10') + '｜' + lineOf(d8.out, '小结：'));
