@@ -23,7 +23,7 @@
     ],
     "generator": "tools/build-data.js",
     "demoSeed": 20261024,
-    "itemCount": 9,
+    "itemCount": 12,
     "itemAliasCount": 1,
     "narratorCount": 72,
     "claimableCount": 13,
@@ -84,7 +84,7 @@
       "minRound": 2,
       "lateWeight": 22,
       "kind": "hazard",
-      "desc": "金币 −50、耐心 −1。第 1 轮不会出现，第 4 轮起明显变多。",
+      "desc": "金币 −50、耐心 −1。越往后越危险。",
       "icon": "弹"
     },
     {
@@ -152,9 +152,48 @@
       "minRound": 1,
       "lateWeight": 7,
       "kind": "item",
-      "desc": "随机小奖或小陷阱，开了才知道（同种子可复现）。",
+      "desc": "随机结算小奖或小陷阱，同种子可复现。",
       "icon": "盒",
       "special": "mystery"
+    },
+    {
+      "id": "jackpot",
+      "name": "隐藏大奖",
+      "coins": 150,
+      "patience": 0,
+      "suspicion": 0,
+      "weight": 5,
+      "minRound": 3,
+      "lateWeight": 6,
+      "kind": "prize",
+      "desc": "金币 +150。全场只有一张，摸到算你狠。",
+      "icon": "宝"
+    },
+    {
+      "id": "landmine",
+      "name": "地雷",
+      "coins": -40,
+      "patience": -1,
+      "suspicion": 0,
+      "weight": 6,
+      "minRound": 2,
+      "lateWeight": 12,
+      "kind": "hazard",
+      "desc": "金币 −40、耐心 −1。越往后越多。",
+      "icon": "雷"
+    },
+    {
+      "id": "quicksand",
+      "name": "流沙",
+      "coins": -20,
+      "patience": 0,
+      "suspicion": -1,
+      "weight": 8,
+      "minRound": 2,
+      "lateWeight": 14,
+      "kind": "hazard",
+      "desc": "金币 −20、怀疑值 −1。越挣扎陷得越深。",
+      "icon": "沙"
     }
   ];
 
@@ -218,6 +257,16 @@
         1
       ]
     },
+    "doorCount": {
+      "min": 3,
+      "max": 6,
+      "weights": {
+        "3": 45,
+        "4": 30,
+        "5": 18,
+        "6": 7
+      }
+    },
     "mystery": {
       "outcomes": [
         {
@@ -236,7 +285,9 @@
       "1": "第 1 轮：旁白还在热身，先看清台面。",
       "2": "第 2 轮：灯光暗了一点，台下有人在看。",
       "3": "第 3 轮：气氛不太对，收手也算赢。",
-      "4": "第 4 轮起：门后可能藏着炸弹，见好就收。"
+      "4": "第 4 轮起：门后可能藏着炸弹，见好就收。",
+      "5": "第 5 轮：这一轮门可能更多，先数清再伸手。",
+      "6": "第 6 轮：门最多到六扇，看稳了再伸手。"
     },
     "cashoutMaster": {
       "minRound": 4,

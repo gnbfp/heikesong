@@ -42,12 +42,20 @@ var EXPECT_ITEMS = {
   switch_ticket: { coins: 0, patience: 0, suspicion: 0 },
   mute_card: { coins: 0, patience: 0, suspicion: 0 },
   double_coins: { coins: 0, patience: 0, suspicion: 0 },
-  mystery_box: { coins: 0, patience: 0, suspicion: 0 }
+  mystery_box: { coins: 0, patience: 0, suspicion: 0 },
+  jackpot: { coins: 150, patience: 0, suspicion: 0 },
+  landmine: { coins: -40, patience: -1, suspicion: 0 },
+  quicksand: { coins: -20, patience: 0, suspicion: -1 }
 };
+/* 顺序即物品池 itemList 的下标：前 9 项是《开工清单》阶段 2 的冻结表，
+   末尾 3 项是工作流 B（数据与随机性）按契约 §4 B2 追加的大奖 / 危险 / 陷阱各 1 件。 */
 var EXPECT_ORDER = [
   'big_prize', 'small_prize', 'empty', 'bomb', 'trap',
-  'switch_ticket', 'mute_card', 'double_coins', 'mystery_box'
+  'switch_ticket', 'mute_card', 'double_coins', 'mystery_box',
+  'jackpot', 'landmine', 'quicksand'
 ];
+/* 工作流 B：物品表数量下限（原 9 件 + 新增 3 件）。 */
+var MIN_ITEMS = 12;
 
 /* 引擎 js/game.js 的 hostPick 按 kind 排序决定主持人开哪扇门，取值表冻结。 */
 var KIND_BY_ID = {
@@ -59,9 +67,14 @@ var KIND_BY_ID = {
   switch_ticket: 'item',
   mute_card: 'item',
   double_coins: 'item',
-  mystery_box: 'item'
+  mystery_box: 'item',
+  jackpot: 'prize',
+  landmine: 'hazard',
+  quicksand: 'hazard'
 };
 var KIND_VALUES = ['prize', 'no-prize', 'hazard', 'item'];
+/* js/effects.js:155-157 只识别这三种 special，未知值会被引擎静默忽略 —— 构建期直接拦住。 */
+var SPECIAL_VALUES = ['gain_item', 'double', 'mystery'];
 
 /* 兼容别名：闭嘴卡在部分模块里叫 shutup_card（同一份定义，不占新物品名额）。 */
 var ITEM_ALIASES = { shutup_card: 'mute_card' };
@@ -183,8 +196,11 @@ var LEGACY_LINE_IDS = [
   's01', 's02', 's03', 's04', 's05', 's06', 's07', 's08', 's09'
 ];
 
+/* 当前校验目标：让每条 FAIL 都写清「哪个文件、哪个键」，便于负向测试与 Lead 定位。 */
+var CUR_FILE = '';
+
 function fail(msg) {
-  console.error('[build-data] 校验失败：' + msg);
+  console.error('[build-data] 校验失败' + (CUR_FILE ? '（' + CUR_FILE + '）' : '') + '：' + msg);
   process.exit(1);
 }
 
@@ -227,8 +243,14 @@ function itemsById(id) {
 }
 
 /* ------------------------------------------------------- 校验 1：物品表逐项一致 */
+CUR_FILE = 'data/items.json';
+/* 工作流 B（契约 §4 B2/B6）：物品表由 9 件扩到 12 件，数量校验改为「下限 + 与冻结顺序一致」，
+   前 9 件仍逐位比对 EXPECT_ORDER / EXPECT_ITEMS / KIND_BY_ID 三道硬编码防线。 */
+if (itemList.length < MIN_ITEMS) {
+  fail('物品数量至少应为 ' + MIN_ITEMS + ' 件（契约 §4 B2：9 件 + 大奖/危险/陷阱各 1 件），实际 ' + itemList.length);
+}
 if (itemList.length !== EXPECT_ORDER.length) {
-  fail('物品数量应为 ' + EXPECT_ORDER.length + '，实际 ' + itemList.length);
+  fail('物品数量应为 ' + EXPECT_ORDER.length + ' 件（EXPECT_ORDER 已冻结顺序），实际 ' + itemList.length);
 }
 var required = ['id', 'name', 'coins', 'patience', 'suspicion', 'weight', 'minRound', 'kind', 'desc', 'icon'];
 var seen = {};
@@ -238,22 +260,39 @@ itemList.forEach(function (it, idx) {
   });
   if (it.id !== EXPECT_ORDER[idx]) fail('物品顺序/ id 不符：第 ' + (idx + 1) + ' 项应为 ' + EXPECT_ORDER[idx] + '，实际 ' + it.id);
   if (seen[it.id]) fail('物品 id 重复：' + it.id);
+  if (ITEM_ALIASES[it.id]) fail(it.id + ' 与兼容别名冲突（见 ITEM_ALIASES）');
   seen[it.id] = true;
-  var exp = EXPECT_ITEMS[it.id];
-  ['coins', 'patience', 'suspicion'].forEach(function (k) {
-    if (Number(it[k]) !== exp[k]) {
-      fail(it.id + '.' + k + ' 应为 ' + exp[k] + '（阶段 2 物品表），实际 ' + it[k]);
-    }
-  });
-  if (it.kind !== KIND_BY_ID[it.id]) {
+  if (KIND_VALUES.indexOf(it.kind) < 0) fail(it.id + '.kind 非法：' + it.kind);
+  if (KIND_BY_ID[it.id] && it.kind !== KIND_BY_ID[it.id]) {
     fail(it.id + '.kind 应为 ' + KIND_BY_ID[it.id] + '（引擎 hostPick 依赖），实际 ' + it.kind);
   }
-  if (KIND_VALUES.indexOf(it.kind) < 0) fail(it.id + '.kind 非法：' + it.kind);
+  if (!String(it.name).length) fail(it.id + '.name 不能为空');
+  /* 契约 §4 B2：desc 必须写清数值效果且整表 ≤ ITEM_DESC_MAX 字（原先只查 empty/small_prize）。 */
+  if (!String(it.desc).length) fail(it.id + '.desc 不能为空');
+  if (String(it.desc).length > ITEM_DESC_MAX) {
+    fail(it.id + '.desc 超过 ' + ITEM_DESC_MAX + ' 字：实际 ' + String(it.desc).length + ' 字（' + String(it.desc) + '）');
+  }
+  if (it.special != null && SPECIAL_VALUES.indexOf(it.special) < 0) {
+    fail(it.id + '.special 非法：' + it.special + '（只认 ' + SPECIAL_VALUES.join(' / ') + '，见 js/effects.js）');
+  }
+  var exp = EXPECT_ITEMS[it.id];
+  if (exp) {
+    ['coins', 'patience', 'suspicion'].forEach(function (k) {
+      if (Number(it[k]) !== exp[k]) {
+        fail(it.id + '.' + k + ' 应为 ' + exp[k] + '（阶段 2 物品表），实际 ' + it[k]);
+      }
+    });
+  }
   if (!(Number(it.weight) > 0)) fail(it.id + '.weight 必须是正数');
   if (!(Number(it.minRound) >= 1)) fail(it.id + '.minRound 必须 ≥ 1');
   if (it.lateWeight != null && !(Number(it.lateWeight) > 0)) fail(it.id + '.lateWeight 必须是正数');
 });
-if (Number(EXPECT_ITEMS.bomb && itemList[3].minRound) < 2) fail('炸弹 minRound 必须 ≥ 2（第 1 轮不放炸弹）');
+/* 危险类物品第 1 轮不得出现：js/data.js 的 poolForRound 只按 config.pool.noBombRounds 排除 id 为
+   bomb 的物品，所以新增危险类必须自带 minRound ≥ 2（landmine 即因此设 2）。 */
+['bomb', 'landmine'].forEach(function (hid) {
+  var hit = itemsById(hid);
+  if (hit && Number(hit.minRound) < 2) fail(hid + '.minRound 必须 ≥ 2（第 1 轮不放危险类物品）');
+});
 /* 契约 §2.2：空门 / 小奖各 +1 怀疑值，desc 必须写清且保持 ≤22 字。 */
 SUSPICION_DESC_IDS.forEach(function (id) {
   var it = itemsById(id);
@@ -310,6 +349,7 @@ achievementList.forEach(function (a, i) {
 });
 
 /* --------------------------------------------------- 校验 2：config 关键字段存在 */
+CUR_FILE = 'data/config.json';
 function need(pathStr, val) {
   if (val == null) fail('config 缺字段 ' + pathStr);
   return val;
@@ -339,6 +379,37 @@ Object.keys(EXPECT_TIMINGS).forEach(function (k) {
 var poolCfg = need('pool', config.pool);
 if (!Array.isArray(poolCfg.noBombRounds) || poolCfg.noBombRounds.indexOf(1) < 0) fail('pool.noBombRounds 必须包含 1（第 1 轮不放炸弹）');
 if (Number(poolCfg.boostRound) !== 4) fail('pool.boostRound 应为 4（第 4 轮起提高炸弹/陷阱权重）');
+
+/* 契约 v5 §2.1/§2.2：门数 3–6，权重表的键必须都落在 min–max 内且非负。 */
+var doorCfg = need('doorCount', config.doorCount);
+if (Number(doorCfg.min) < 3 || Number(doorCfg.max) > 6) {
+  fail('doorCount.min/max 必须落在 3–6 之间（引擎 clampDoorCount 只认这个区间），实际 ' +
+    doorCfg.min + '–' + doorCfg.max);
+}
+if (!(Number(doorCfg.min) <= Number(doorCfg.max))) {
+  fail('doorCount.min 不能大于 doorCount.max，实际 ' + doorCfg.min + '–' + doorCfg.max);
+}
+if (!doorCfg.weights || typeof doorCfg.weights !== 'object' || Array.isArray(doorCfg.weights)) {
+  fail('doorCount.weights 必须是 { "3": 权重, ... } 形式的对象');
+}
+var doorKeys = Object.keys(doorCfg.weights);
+if (!doorKeys.length) fail('doorCount.weights 不能为空');
+var doorWeightSum = 0;
+doorKeys.forEach(function (k) {
+  var n = Number(k);
+  if (!(n >= Number(doorCfg.min) && n <= Number(doorCfg.max))) {
+    fail('doorCount.weights 的键 ' + k + ' 必须落在 ' + doorCfg.min + '–' + doorCfg.max + ' 之间');
+  }
+  var w = Number(doorCfg.weights[k]);
+  if (!(w >= 0)) fail('doorCount.weights.' + k + ' 必须是非负数，实际 ' + doorCfg.weights[k]);
+  doorWeightSum += w;
+});
+if (!(doorWeightSum > 0)) fail('doorCount.weights 权重之和必须为正数（否则永远抽不出门数）');
+[3, 4, 5, 6].forEach(function (n) {
+  if (doorCfg.weights[n] == null && doorCfg.weights[String(n)] == null) {
+    fail('doorCount.weights 缺 ' + n + ' 门权重（契约 §2.2 要求 3–6 全覆盖）');
+  }
+});
 
 /* 评级：引擎 js/game.js 用 Array.isArray(config.ratings) 判断，必须是数组。 */
 var ratings = need('ratings', config.ratings);
@@ -795,6 +866,7 @@ out.push('');
 var code = out.join('\n');
 
 /* ------------------------------------- 构建期自检：把产物丢进 vm 跑一遍关键契约 */
+CUR_FILE = 'js/data.js（生成产物）';
 var sandbox = {};
 try {
   vm.runInNewContext(code, sandbox, { filename: 'js/data.js' });
@@ -803,9 +875,10 @@ try {
 }
 var GameData = sandbox.GameData;
 if (!GameData) fail('产物没有挂上 globalThis.GameData');
-if (GameData.itemList.length !== 9) fail('GameData.itemList 应为 9 项');
-if (Object.keys(GameData.items).length !== 9 + aliasCount) {
-  fail('GameData.items 应为 9 种主条目 + ' + aliasCount + ' 个别名，实际 ' + Object.keys(GameData.items).length);
+if (GameData.itemList.length !== EXPECT_ORDER.length) fail('GameData.itemList 应为 ' + EXPECT_ORDER.length + ' 项');
+if (GameData.itemList.length < MIN_ITEMS) fail('GameData.itemList 至少应为 ' + MIN_ITEMS + ' 项（契约 §4 B2）');
+if (Object.keys(GameData.items).length !== EXPECT_ORDER.length + aliasCount) {
+  fail('GameData.items 应为 ' + EXPECT_ORDER.length + ' 种主条目 + ' + aliasCount + ' 个别名，实际 ' + Object.keys(GameData.items).length);
 }
 if (GameData.itemList[0] !== GameData.items.big_prize) fail('items 与 itemList 未共享同一批对象引用');
 if (GameData.items.shutup_card !== GameData.items.mute_card) fail('别名 shutup_card 应指向 mute_card 的同一对象');
@@ -823,6 +896,26 @@ if (wOf(r2, 'bomb') <= 0) fail('第 2 轮门池应包含 bomb');
 if (wOf(r4, 'bomb') <= wOf(r2, 'bomb')) fail('第 4 轮 bomb 权重未提高：' + wOf(r2, 'bomb') + ' -> ' + wOf(r4, 'bomb'));
 if (wOf(r4, 'trap') <= wOf(r2, 'trap')) fail('第 4 轮 trap 权重未提高：' + wOf(r2, 'trap') + ' -> ' + wOf(r4, 'trap'));
 if (wOf(r4, 'big_prize') !== wOf(r2, 'big_prize')) fail('第 4 轮不应改动 big_prize 权重');
+
+/* 工作流 B：新增 3 件物品必须真进产物与门池，且各自遵守 minRound / kind / lateWeight。 */
+['jackpot', 'landmine', 'quicksand'].forEach(function (nid) {
+  var ni = GameData.items[nid];
+  if (!ni) fail('新增物品 ' + nid + ' 未进入产物 items');
+  if (ni.kind !== KIND_BY_ID[nid]) fail(nid + '.kind 产物里是 ' + ni.kind + '，应为 ' + KIND_BY_ID[nid]);
+  if (!(Number(ni.weight) > 0)) fail(nid + '.weight 产物里不是正数');
+  if (!(Number(ni.minRound) >= 1)) fail(nid + '.minRound 产物里不是 ≥ 1');
+});
+var r1Ids = GameData.poolForRound(1).map(function (e) { return e.id; });
+['bomb', 'landmine', 'quicksand'].forEach(function (hid) {
+  if (r1Ids.indexOf(hid) >= 0) fail('第 1 轮门池不应出现危险类物品 ' + hid + '（minRound ≥ 2）');
+});
+if (wOf(r2, 'jackpot') > 0) fail('第 2 轮门池不应出现 jackpot（minRound=3）');
+if (wOf(GameData.poolForRound(3), 'jackpot') <= 0) fail('第 3 轮门池应包含 jackpot（minRound=3）');
+if (wOf(r2, 'landmine') <= 0) fail('第 2 轮门池应包含 landmine（minRound=2）');
+if (wOf(r2, 'quicksand') <= 0) fail('第 2 轮门池应包含 quicksand（minRound=2）');
+if (wOf(r4, 'landmine') <= wOf(r2, 'landmine')) fail('第 4 轮 landmine 权重未提高：' + wOf(r2, 'landmine') + ' -> ' + wOf(r4, 'landmine'));
+if (wOf(r4, 'quicksand') <= wOf(r2, 'quicksand')) fail('第 4 轮 quicksand 权重未提高：' + wOf(r2, 'quicksand') + ' -> ' + wOf(r4, 'quicksand'));
+if (GameData.poolForRound(4).length !== GameData.poolForRound(3).length) fail('第 4 轮只应改权重，不应改门池条目数（第 3 轮起物品已全量入池）');
 var mut = GameData.poolForRound(2);
 mut[0].weight = 9999;
 if (GameData.poolForRound(2)[0].weight === 9999) fail('poolForRound 返回了会被外部污染的引用');
@@ -867,9 +960,22 @@ if (stableStringify(GameData.config.economy.shopOpenStates) !== stableStringify(
   fail('GameData.config.economy.shopOpenStates 应为 [DECIDE, SETTLE_ROUND]');
 }
 if (GameData.config.economy.spentStat !== true) fail('GameData.config.economy.spentStat 应为 true');
-/* 商店数据不得混进物品池：itemList 仍必须 9 项、items 仍必须 9 主条目 + 别名。 */
+/* 契约 v5 §2.1：门数配置必须真进产物，引擎 doorCountFor 才抽得到 4–6 门。 */
+if (!GameData.config.doorCount || !GameData.config.doorCount.weights) fail('GameData.config.doorCount 未进入产物');
+if (Number(GameData.config.doorCount.min) !== Number(doorCfg.min) || Number(GameData.config.doorCount.max) !== Number(doorCfg.max)) {
+  fail('产物里的 doorCount.min/max 与 config.json 源不一致');
+}
+if (Number(GameData.config.doorCount.weights['4']) !== Number(doorCfg.weights['4'])) {
+  fail('产物里的 doorCount.weights.4 与 config.json 源不一致');
+}
+/* 契约 §4 B4：第 5/6 轮门数提示必须进产物且非空（不剧透真话/撒谎）。 */
+[5, 6].forEach(function (r) {
+  var h = GameData.config.roundHints && (GameData.config.roundHints[r] || GameData.config.roundHints[String(r)]);
+  if (!h) fail('产物里的 roundHints 缺第 ' + r + ' 轮提示');
+});
+/* 商店数据不得混进物品池：itemList 仍必须与 EXPECT_ORDER 等长、items 仍必须 12 主条目 + 别名。 */
 if (GameData.items.fuse || GameData.items.patience_charm) fail('商店独占商品 fuse / patience_charm 不得进入物品池 items');
-if (GameData.itemList.length !== 9) fail('商店改动不得影响物品池数量（itemList 应仍为 9）');
+if (GameData.itemList.length !== EXPECT_ORDER.length) fail('商店改动不得影响物品池数量（itemList 应仍为 ' + EXPECT_ORDER.length + '）');
 
 /* 契约 v3：怀疑值上限 / 空门小奖怀疑值 / 结局表 / 线索语料都必须真进了产物。 */
 if (GameData.config.suspicion.max !== 3) fail('GameData.config.suspicion.max 应为 3');
